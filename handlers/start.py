@@ -1,7 +1,6 @@
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from datetime import date, timedelta
 
 from utils.database import Database
 
@@ -12,6 +11,10 @@ db = Database()
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
+    # Проверяем подключение к БД
+    if db.conn is None:
+        await db.connect()
+    
     user_id = await db.get_or_create_user(
         telegram_id=message.from_user.id,
         username=message.from_user.username,
