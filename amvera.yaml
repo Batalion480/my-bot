@@ -2,8 +2,8 @@ meta:
   version: 1.0
   name: my-bot
   toolchain:
-    type: python
-    version: 3.11
+    name: python
+    version: "3.11"
 
 app:
   type: python
