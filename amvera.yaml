@@ -1,11 +1,12 @@
 meta:
   version: 1.0
   name: my-bot
-  description: Бот для расчета НМЦК и сроков
+  toolchain:
+    type: python
+    version: 3.11
 
 app:
   type: python
-  version: 3.11
 
 install:
   - pip install -r requirements.txt
