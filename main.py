@@ -49,7 +49,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
-        await db.pool.close()
+        await db.close()
 
 
 if __name__ == "__main__":
