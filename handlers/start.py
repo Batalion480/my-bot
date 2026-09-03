@@ -10,11 +10,7 @@ db = Database()
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
-    """Обработчик команды /start"""
-    # Проверяем подключение к БД
-    if db.conn is None:
-        await db.connect()
-    
+    """Главное меню бота"""
     user_id = await db.get_or_create_user(
         telegram_id=message.from_user.id,
         username=message.from_user.username,
@@ -22,18 +18,17 @@ async def cmd_start(message: types.Message):
     )
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🆕 Новая закупка", callback_data="new_procurement")
-    builder.button(text="📂 Мои закупки", callback_data="my_procurements")
+    builder.button(text="🔵 44-ФЗ", callback_data="law_44")
+    builder.button(text="🟢 223-ФЗ", callback_data="law_223")
     builder.adjust(1)
 
     await message.answer(
         "🏢 Добро пожаловать в бот **«Смета+Срок»**!\n\n"
         "Я помогу вам:\n"
-        "• Рассчитать НМЦК на основе коммерческих предложений\n"
+        "• Рассчитать НМЦК методом сопоставимых рыночных цен\n"
         "• Построить календарный план по 44-ФЗ или 223-ФЗ\n"
-        "• Проанализировать риски при сдвиге дат\n"
         "• Сформировать готовый PDF-документ\n\n"
-        "Выберите действие:",
+        "Выберите закон:",
         reply_markup=builder.as_markup()
     )
 
@@ -42,5 +37,4 @@ async def cmd_start(message: types.Message):
 async def back_to_menu(callback: types.CallbackQuery):
     """Возврат в главное меню"""
     await callback.answer()
-    await callback.message.delete()
     await cmd_start(callback.message)
