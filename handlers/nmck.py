@@ -27,7 +27,7 @@ db = Database()
 class NMCKStates(StatesGroup):
     waiting_for_law = State()
     waiting_for_position_count = State()
-    waiting_for_calculation_method = State()  # НОВОЕ: выбор метода
+    waiting_for_calculation_method = State()
     waiting_for_input_method = State()
     
     # Ручной ввод (1 позиция)
@@ -117,7 +117,7 @@ def extract_unit(text: str) -> str:
 @router.callback_query(lambda c: c.data.startswith("law_"))
 async def select_law(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    law_type = callback.data.replace("law_", "")  # "44" или "223"
+    law_type = callback.data.replace("law_", "")
     
     await state.update_data(law_type=law_type)
     await state.set_state(NMCKStates.waiting_for_position_count)
@@ -141,7 +141,6 @@ async def select_position_count(callback: CallbackQuery, state: FSMContext):
     count = callback.data.replace("pos_", "")
     await state.update_data(position_count=count)
     
-    # Спрашиваем метод расчёта
     builder = InlineKeyboardBuilder()
     builder.button(text="📊 Средняя цена", callback_data="method_average")
     builder.button(text="📉 Минимальная цена (письмо Минфина)", callback_data="method_minimum")
@@ -158,7 +157,7 @@ async def select_position_count(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data.startswith("method_"))
 async def select_calculation_method(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    method = callback.data.replace("method_", "")  # 'average' или 'minimum'
+    method = callback.data.replace("method_", "")
     await state.update_data(calculation_method=method)
     
     method_text = "средней цене" if method == "average" else "минимальной цене (по письму Минфина)"
@@ -167,7 +166,6 @@ async def select_calculation_method(callback: CallbackQuery, state: FSMContext):
     count = data.get("position_count")
     
     if count == "1":
-        # Одна позиция → ручной ввод
         await state.set_state(NMCKStates.waiting_for_price_1)
         await callback.message.edit_text(
             f"✅ Выбран метод: {method_text}\n\n"
@@ -175,7 +173,6 @@ async def select_calculation_method(callback: CallbackQuery, state: FSMContext):
             "Например: *150000*"
         )
     else:
-        # Много позиций → выбор способа ввода
         builder = InlineKeyboardBuilder()
         builder.button(text="📸 Загрузить фото/скан КП", callback_data="input_photo")
         builder.button(text="📂 Загрузить файл Excel", callback_data="input_excel")
@@ -351,148 +348,22 @@ async def process_quantity_continue(message: Message, state: FSMContext):
 
 
 # ============================================================
-# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ)
+# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ) - ОТКЛЮЧЕНА
 # ============================================================
 
 @router.callback_query(lambda c: c.data == "input_photo")
 async def input_photo(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.edit_text(
-        "⚠️ **Функция распознавания фото временно недоступна.**\n\n"
+        "⚠️ **Функция распознавания фото временно недоступна на сервере.**\n\n"
         "Пожалуйста, используйте:\n"
-        "• 📝 Ручной ввод цен\n"
-        "• 📂 Загрузку Excel-файла"
-    )
-    await callback.answer()
-    await state.set_state(NMCKStates.waiting_for_photo)
-    await callback.message.edit_text(
-        "📸 Отправьте **фото или скан** коммерческого предложения.\n\n"
-        "Бот распознает:\n"
-        "• Наименование позиций\n"
-        "• Единицу измерения\n"
-        "• Количество\n"
-        "• Цену за единицу\n"
-        "• Общую цену\n\n"
-        "Можно отправить 2-3 КП (от разных поставщиков) по очереди."
+        "• 📝 Ручной ввод\n"
+        "• 📂 Загрузку Excel-файла\n\n"
+        "Извините за неудобства! 🙏"
     )
 
 
-@router.message(NMCKStates.waiting_for_photo, F.photo)
-async def handle_photo(message: Message, state: FSMContext):
-    # Скачиваем фото
-    photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    file_path = f"temp/{photo.file_id}.jpg"
-    os.makedirs("temp", exist_ok=True)
-    await message.bot.download_file(file.file_path, file_path)
-    
-    await message.answer("🔍 Распознаю текст на изображении...")
-    
-    try:
-        # Предобработка изображения
-        img = cv2.imread(file_path)
-        if img is None:
-            await message.answer("⚠️ Не удалось загрузить изображение. Попробуйте другое фото.")
-            return
-        
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        denoised = cv2.fastNlMeansDenoising(gray, None, h=15, templateWindowSize=7, searchWindowSize=21)
-        thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                       cv2.THRESH_BINARY, 11, 2)
-        
-        # OCR
-        custom_config = r'--oem 3 --psm 6'
-        text = pytesseract.image_to_string(thresh, lang='rus+eng', config=custom_config)
-        
-        # Парсинг
-        item_name = extract_item_name(text)
-        unit = extract_unit(text)
-        quantity = extract_quantity(text)
-        price = extract_price(text)
-        
-        # Сохраняем распознанное в состояние
-        data = await state.get_data()
-        positions = data.get("positions", [])
-        positions.append({
-            "name": item_name,
-            "unit": unit,
-            "quantity": quantity,
-            "price": price,
-            "supplier": data.get("current_supplier", f"Поставщик {len(positions)+1}"),
-            "raw_text": text
-        })
-        await state.update_data(positions=positions)
-        
-        # Показываем результат
-        confirm_text = (
-            f"🔍 **Распознано на изображении:**\n\n"
-            f"📦 Наименование: {item_name}\n"
-            f"📏 Ед.изм.: {unit}\n"
-            f"📊 Количество: {quantity}\n"
-            f"💰 Цена за ед.: {price:,.2f} руб.\n\n"
-            f"✅ Всё верно?"
-        )
-        builder = InlineKeyboardBuilder()
-        builder.button(text="✅ Да, всё верно", callback_data="photo_confirm_yes")
-        builder.button(text="✏️ Изменить", callback_data="photo_confirm_edit")
-        builder.button(text="📸 Загрузить ещё одно КП", callback_data="photo_confirm_next")
-        builder.button(text="🔄 Распознать заново", callback_data="photo_confirm_retry")
-        builder.adjust(1)
-        
-        await state.set_state(NMCKStates.waiting_for_photo_confirm)
-        await message.answer(confirm_text, reply_markup=builder.as_markup())
-        
-    except Exception as e:
-        await message.answer(f"❌ Ошибка распознавания: {e}")
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_yes")
-async def photo_confirm_yes(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    data = await state.get_data()
-    positions = data.get("positions", [])
-    
-    if len(positions) >= 3:
-        # У нас уже 3 КП → переходим к расчёту
-        await calculate_multi_position_nmck(callback.message, state)
-    else:
-        # Просим загрузить ещё
-        await state.set_state(NMCKStates.waiting_for_photo_next)
-        await callback.message.edit_text(
-            f"✅ Сохранено {len(positions)} КП.\n\n"
-            f"Необходимо всего **3** КП. Загрузите ещё одно фото или нажмите «Завершить».\n\n"
-        )
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_next")
-async def photo_confirm_next(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(NMCKStates.waiting_for_photo)
-    await callback.message.edit_text(
-        "📸 Отправьте следующее фото коммерческого предложения."
-    )
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_edit")
-async def photo_confirm_edit(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.edit_text(
-        "✏️ Введите данные вручную в формате:\n\n"
-        "Наименование: Бумага офисная\n"
-        "Ед.изм.: шт.\n"
-        "Количество: 100\n"
-        "Цена за ед.: 150"
-    )
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_retry")
-async def photo_confirm_retry(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(NMCKStates.waiting_for_photo)
-    await callback.message.edit_text(
-        "🔄 Отправьте новое фото для распознавания."
-    )
-
+# Функция handle_photo полностью удалена для сервера
 
 # ============================================================
 # ЗАГРУЗКА EXCEL (МНОГО ПОЗИЦИЙ)
@@ -524,7 +395,6 @@ async def input_excel(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data == "download_template")
 async def download_template(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    # Отправляем шаблон через команду /template
     await send_template(callback.message)
 
 
@@ -545,7 +415,6 @@ async def handle_excel(message: Message, state: FSMContext):
     try:
         df = pd.read_excel(file_path)
         
-        # Ожидаемые колонки из вашего шаблона
         expected_cols = [
             'п/п №', 
             'Наименование позиции', 
@@ -557,7 +426,6 @@ async def handle_excel(message: Message, state: FSMContext):
             'Коммерческое предложение 3 от __________ Вх. № ____'
         ]
         
-        # Проверяем наличие колонок
         for col in expected_cols:
             if col not in df.columns:
                 await message.answer(
@@ -568,17 +436,14 @@ async def handle_excel(message: Message, state: FSMContext):
         
         positions = []
         for index, row in df.iterrows():
-            # Пропускаем пустые строки
             if pd.isna(row['Наименование позиции']) or str(row['Наименование позиции']).strip() == '':
                 continue
                 
-            # Парсим цены из трёх колонок
             prices = []
             for i in range(1, 4):
                 col_name = f'Коммерческое предложение {i} от __________ Вх. № ____'
                 val = row[col_name]
                 try:
-                    # Очищаем от пробелов и заменяем запятую на точку
                     if isinstance(val, str):
                         val = val.replace(' ', '').replace(',', '.')
                     price = float(val)
@@ -586,7 +451,6 @@ async def handle_excel(message: Message, state: FSMContext):
                 except (ValueError, TypeError):
                     prices.append(0.0)
             
-            # Если нет ни одной цены - пропускаем
             if all(p == 0 for p in prices):
                 continue
             
@@ -608,6 +472,7 @@ async def handle_excel(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(f"❌ Ошибка парсинга: {e}\n\nПроверьте, что файл соответствует шаблону.")
 
+
 # ============================================================
 # РАСЧЁТ НМЦК ДЛЯ МНОГИХ ПОЗИЦИЙ
 # ============================================================
@@ -625,7 +490,6 @@ async def calculate_multi_position_nmck(message: types.Message, state: FSMContex
     method = data.get("calculation_method", "average")
     method_text = "средней цене" if method == "average" else "минимальной цене"
     
-    # Группируем цены по позициям
     all_prices = []
     for pos in positions:
         if 'prices' in pos:
@@ -639,7 +503,6 @@ async def calculate_multi_position_nmck(message: types.Message, state: FSMContex
     
     result = NMCKCalculator.calculate_nmck(prices=all_prices, method=method)
     
-    # Суммарная НМЦК по всем позициям
     total_nmck = 0
     for pos in positions:
         qty = pos.get('quantity', 1)
@@ -686,7 +549,6 @@ async def create_pdf(callback: CallbackQuery, state: FSMContext):
     method = data.get("calculation_method", "average")
     method_text = "Средняя арифметическая" if method == "average" else "Минимальная цена (письмо Минфина)"
     
-    # Если это многопозиционный расчёт, собираем данные из positions
     positions = data.get("positions", [])
     if positions:
         suppliers = []
@@ -713,7 +575,6 @@ async def create_pdf(callback: CallbackQuery, state: FSMContext):
             responsible_person="Иванов И.И."
         )
     else:
-        # Одиночная позиция
         suppliers = [
             {"name": "Поставщик 1", "price": data.get("price_1", 0)},
             {"name": "Поставщик 2", "price": data.get("price_2", 0)},
