@@ -1,6 +1,6 @@
 meta:
   version: 1.0
-  name: my-bot
+  name: nmck-srok-bot
   description: Бот для расчета НМЦК и сроков
 
 app:
@@ -12,7 +12,3 @@ install:
 
 run:
   - python main.py
-
-settings:
-  work_dir: /app
-  port: 80
