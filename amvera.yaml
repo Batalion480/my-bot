@@ -1,14 +1,13 @@
-meta:
-  version: 1.0
-  name: nmck-srok-bot
-  description: Бот для расчета НМЦК и сроков
-
 app:
   type: python
-  version: 3.11
+  version: 3.12
 
 install:
   - pip install -r requirements.txt
 
 run:
   - python main.py
+
+settings:
+  work_dir: /app
+  port: 80
