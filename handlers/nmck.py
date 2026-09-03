@@ -5,7 +5,6 @@ import json
 from datetime import datetime, date
 from typing import List, Dict, Any
 import pandas as pd
-import cv2
 import numpy as np
 import pytesseract
 
@@ -357,6 +356,13 @@ async def process_quantity_continue(message: Message, state: FSMContext):
 
 @router.callback_query(lambda c: c.data == "input_photo")
 async def input_photo(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.edit_text(
+        "⚠️ **Функция распознавания фото временно недоступна.**\n\n"
+        "Пожалуйста, используйте:\n"
+        "• 📝 Ручной ввод цен\n"
+        "• 📂 Загрузку Excel-файла"
+    )
     await callback.answer()
     await state.set_state(NMCKStates.waiting_for_photo)
     await callback.message.edit_text(
