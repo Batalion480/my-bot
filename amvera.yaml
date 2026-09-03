@@ -1,3 +1,6 @@
+meta:
+  toolchain: python
+
 app:
   type: python
   version: 3.12
