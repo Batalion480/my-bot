@@ -12,22 +12,26 @@ class Database:
     def __init__(self):
         self.conn = None
         self.cursor = None
-        # Извлекаем путь из DATABASE_URL
         if DATABASE_URL.startswith("sqlite:///"):
             self.db_path = DATABASE_URL.replace("sqlite:///", "")
         else:
-            self.db_path = "data/bot.db"
+            self.db_path = "/data/bot.db"
 
     async def connect(self):
-        """Подключается к базе данных SQLite"""
-        # Создаем папку data, если её нет
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
         await self._init_tables()
         print("✅ База данных SQLite подключена")
+
+    async def _ensure_connection(self):
+        if self.conn is None or self.cursor is None:
+            await self.connect()
+        try:
+            self.cursor.execute("SELECT 1")
+        except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            await self.connect()
 
     async def _init_tables(self):
         """Создает таблицы, если их нет"""
@@ -102,6 +106,7 @@ class Database:
                 status TEXT DEFAULT 'draft',
                 final_pdf_path TEXT,
                 scatter_warning TEXT,
+                positions TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -131,12 +136,37 @@ class Database:
             )
         """)
 
-        # Индексы
+        # ============================================================
+        # ТАБЛИЦА knowledge_base (база знаний законов)
+        # ============================================================
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_base (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                law_type TEXT NOT NULL,
+                procedure_type TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                article TEXT NOT NULL,
+                rule_text TEXT NOT NULL,
+                calculation_type TEXT,
+                source TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Индексы для knowledge_base
+        self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_law_procedure ON knowledge_base(law_type, procedure_type)")
+        self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_stage ON knowledge_base(stage)")
+
+        # Индексы для остальных таблиц
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_procurements_user_id ON procurements(user_id)")
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_procurements_status ON procurements(status)")
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_timeline_procurement_id ON procurement_timeline(procurement_id)")
-        
+
         self.conn.commit()
+
+    # ============================================================
+    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+    # ============================================================
 
     def _row_to_dict(self, row):
         return {k: row[k] for k in row.keys()} if row else None
@@ -151,8 +181,12 @@ class Database:
             return dt.isoformat()
         return dt
 
-    # -------- USERS --------
+    # ============================================================
+    # USERS
+    # ============================================================
+
     async def get_or_create_user(self, telegram_id: int, username: str = None, first_name: str = None) -> int:
+        await self._ensure_connection()
         self.cursor.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
         row = self.cursor.fetchone()
         if row:
@@ -169,8 +203,12 @@ class Database:
             self.conn.commit()
             return row["id"]
 
-    # -------- CUSTOMER SETTINGS --------
+    # ============================================================
+    # CUSTOMER SETTINGS
+    # ============================================================
+
     async def get_settings(self, user_id: int) -> List[Dict]:
+        await self._ensure_connection()
         self.cursor.execute(
             "SELECT * FROM customer_settings WHERE user_id = ? ORDER BY is_default DESC, created_at",
             (user_id,)
@@ -178,6 +216,7 @@ class Database:
         return self._rows_to_dicts(self.cursor.fetchall())
 
     async def get_default_settings(self, user_id: int) -> Optional[Dict]:
+        await self._ensure_connection()
         self.cursor.execute(
             "SELECT * FROM customer_settings WHERE user_id = ? AND is_default = 1",
             (user_id,)
@@ -187,6 +226,7 @@ class Database:
     async def create_settings(self, user_id: int, name: str, bid_days: int, review_days: int,
                               auction_delay: int = 2, signing_days: int = 5, bg_days: int = 5,
                               is_default: bool = False) -> int:
+        await self._ensure_connection()
         if is_default:
             self.cursor.execute("UPDATE customer_settings SET is_default = 0 WHERE user_id = ?", (user_id,))
         self.cursor.execute(
@@ -200,9 +240,13 @@ class Database:
         self.conn.commit()
         return row["id"]
 
-    # -------- SUPPLIERS --------
+    # ============================================================
+    # SUPPLIERS
+    # ============================================================
+
     async def get_or_create_supplier(self, user_id: int, name: str, inn: str = None,
                                      price: float = None, note: str = None) -> int:
+        await self._ensure_connection()
         self.cursor.execute("SELECT id FROM suppliers WHERE user_id = ? AND inn = ?", (user_id, inn))
         row = self.cursor.fetchone()
         if row:
@@ -218,19 +262,24 @@ class Database:
     async def get_suppliers_by_ids(self, supplier_ids: List[int]) -> List[Dict]:
         if not supplier_ids:
             return []
+        await self._ensure_connection()
         placeholders = ",".join(["?"] * len(supplier_ids))
         self.cursor.execute(f"SELECT * FROM suppliers WHERE id IN ({placeholders})", supplier_ids)
         return self._rows_to_dicts(self.cursor.fetchall())
 
-    # -------- PROCUREMENTS --------
+    # ============================================================
+    # PROCUREMENTS
+    # ============================================================
+
     async def create_procurement(self, user_id: int, data: Dict) -> int:
+        await self._ensure_connection()
         self.cursor.execute(
             """INSERT INTO procurements 
                (user_id, title, law_type, nmck, selected_supplier_ids, 
                 customer_setting_id, custom_bid_days, custom_review_days,
                 publication_date, bid_end_date, consideration_date, 
-                auction_date, signing_date, bg_deadline_date, scatter_warning)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                auction_date, signing_date, bg_deadline_date, scatter_warning, positions)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (
                 user_id,
                 data.get("title"),
@@ -246,7 +295,8 @@ class Database:
                 self._format_date(data.get("auction_date")),
                 self._format_date(data.get("signing_date")),
                 self._format_date(data.get("bg_deadline_date")),
-                data.get("scatter_warning")
+                data.get("scatter_warning"),
+                json.dumps(data.get("positions", [])) if data.get("positions") else None
             )
         )
         row = self.cursor.fetchone()
@@ -254,6 +304,7 @@ class Database:
         return row["id"]
 
     async def update_procurement(self, procurement_id: int, data: Dict):
+        await self._ensure_connection()
         set_clause = ", ".join([f"{k} = ?" for k in data.keys()])
         values = list(data.values()) + [procurement_id]
         self.cursor.execute(
@@ -263,18 +314,41 @@ class Database:
         self.conn.commit()
 
     async def get_procurement(self, procurement_id: int) -> Optional[Dict]:
+        await self._ensure_connection()
         self.cursor.execute("SELECT * FROM procurements WHERE id = ?", (procurement_id,))
-        return self._row_to_dict(self.cursor.fetchone())
+        row = self.cursor.fetchone()
+        if row:
+            res = dict(row)
+            if res.get("positions"):
+                res["positions"] = json.loads(res["positions"])
+            if res.get("selected_supplier_ids"):
+                res["selected_supplier_ids"] = json.loads(res["selected_supplier_ids"])
+            return res
+        return None
 
     async def get_user_procurements(self, user_id: int, limit: int = 10) -> List[Dict]:
+        await self._ensure_connection()
         self.cursor.execute(
             "SELECT * FROM procurements WHERE user_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT ?",
             (user_id, limit)
         )
-        return self._rows_to_dicts(self.cursor.fetchall())
+        rows = self.cursor.fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            if d.get("positions"):
+                d["positions"] = json.loads(d["positions"])
+            if d.get("selected_supplier_ids"):
+                d["selected_supplier_ids"] = json.loads(d["selected_supplier_ids"])
+            result.append(d)
+        return result
 
-    # -------- TIMELINE --------
+    # ============================================================
+    # TIMELINE
+    # ============================================================
+
     async def add_timeline_entry(self, procurement_id: int, data: Dict) -> int:
+        await self._ensure_connection()
         self.cursor.execute(
             """INSERT INTO procurement_timeline 
                (procurement_id, revision_number, shift_days,
@@ -304,6 +378,7 @@ class Database:
         return row["id"]
 
     async def get_timeline(self, procurement_id: int) -> List[Dict]:
+        await self._ensure_connection()
         self.cursor.execute(
             "SELECT * FROM procurement_timeline WHERE procurement_id = ? ORDER BY revision_number",
             (procurement_id,)
@@ -311,6 +386,7 @@ class Database:
         return self._rows_to_dicts(self.cursor.fetchall())
 
     async def get_final_timeline(self, procurement_id: int) -> Optional[Dict]:
+        await self._ensure_connection()
         self.cursor.execute(
             "SELECT * FROM procurement_timeline WHERE procurement_id = ? AND is_final = 1",
             (procurement_id,)
@@ -318,6 +394,7 @@ class Database:
         return self._row_to_dict(self.cursor.fetchone())
 
     async def set_final_timeline(self, procurement_id: int, revision_number: int):
+        await self._ensure_connection()
         self.cursor.execute("UPDATE procurement_timeline SET is_final = 0 WHERE procurement_id = ?", (procurement_id,))
         self.cursor.execute(
             "UPDATE procurement_timeline SET is_final = 1 WHERE procurement_id = ? AND revision_number = ?",
@@ -326,18 +403,79 @@ class Database:
         self.conn.commit()
 
     async def get_next_revision(self, procurement_id: int) -> int:
+        await self._ensure_connection()
         self.cursor.execute("SELECT MAX(revision_number) as max_rev FROM procurement_timeline WHERE procurement_id = ?",
                            (procurement_id,))
         row = self.cursor.fetchone()
         return (row["max_rev"] or 0) + 1
 
     async def save_pdf_path(self, procurement_id: int, pdf_path: str):
+        await self._ensure_connection()
         self.cursor.execute(
             "UPDATE procurements SET final_pdf_path = ?, status = 'approved' WHERE id = ?",
             (pdf_path, procurement_id)
         )
         self.conn.commit()
 
+    # ============================================================
+    # KNOWLEDGE BASE (база знаний законов)
+    # ============================================================
+
+    async def get_rule(self, law_type: str, procedure_type: str, stage: str) -> Optional[Dict]:
+        """Получает правило из базы знаний по типу закона, процедуре и этапу"""
+        await self._ensure_connection()
+        self.cursor.execute(
+            "SELECT * FROM knowledge_base WHERE law_type = ? AND procedure_type = ? AND stage = ?",
+            (law_type, procedure_type, stage)
+        )
+        row = self.cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_all_rules_for_procedure(self, law_type: str, procedure_type: str) -> List[Dict]:
+        """Получает все правила для конкретной процедуры (все этапы)"""
+        await self._ensure_connection()
+        self.cursor.execute(
+            "SELECT * FROM knowledge_base WHERE law_type = ? AND procedure_type = ? ORDER BY id",
+            (law_type, procedure_type)
+        )
+        return self._rows_to_dicts(self.cursor.fetchall())
+
+    async def insert_rule(self, law_type: str, procedure_type: str, stage: str,
+                          article: str, rule_text: str, calculation_type: str = None,
+                          source: str = None) -> int:
+        """Вставляет новое правило в базу знаний"""
+        await self._ensure_connection()
+        self.cursor.execute(
+            """INSERT INTO knowledge_base 
+               (law_type, procedure_type, stage, article, rule_text, calculation_type, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+            (law_type, procedure_type, stage, article, rule_text, calculation_type, source)
+        )
+        row = self.cursor.fetchone()
+        self.conn.commit()
+        return row["id"]
+
+    async def clear_knowledge_base(self):
+        """Очищает таблицу knowledge_base (для перезаливки данных)"""
+        await self._ensure_connection()
+        self.cursor.execute("DELETE FROM knowledge_base")
+        self.conn.commit()
+
+    async def get_all_rules(self, law_type: str = None) -> List[Dict]:
+        """Получает все правила из базы знаний (можно отфильтровать по типу закона)"""
+        await self._ensure_connection()
+        if law_type:
+            self.cursor.execute("SELECT * FROM knowledge_base WHERE law_type = ?", (law_type,))
+        else:
+            self.cursor.execute("SELECT * FROM knowledge_base")
+        return self._rows_to_dicts(self.cursor.fetchall())
+
+    # ============================================================
+    # ЗАКРЫТИЕ ПОДКЛЮЧЕНИЯ
+    # ============================================================
+
     async def close(self):
         if self.conn:
             self.conn.close()
+            self.conn = None
+            self.cursor = None
