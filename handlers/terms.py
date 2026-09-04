@@ -476,20 +476,11 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
     dates = data.get("dates")
     law_type = data.get("law_type", "44")
     nmck = data.get("nmck")
-    procedure = data.get("procedure")
 
     if not dates:
         await callback.message.edit_text("⚠️ Данные не найдены. Начните расчёт заново.")
         return
 
-    # Получаем правила из БД для отображения в PDF
-    law_type_db = f"{law_type}-FZ"
-    rules = await db.get_all_rules_for_procedure(law_type_db, procedure)
-    
-    # Добавляем правила в dates для PDF
-    dates['rules'] = rules
-
-    # Генерируем PDF
     try:
         pdf_path = generate_terms_pdf(
             dates=dates,
@@ -503,26 +494,22 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
             await callback.message.delete()
             await callback.message.answer_document(
                 types.FSInputFile(pdf_path),
-                caption=f"📄 **Календарный план закупки**\n\n"
-                        f"⚖️ Закон: {law_type}-ФЗ\n"
-                        f"📅 Публикация: {format_date(dates.get('publication_date'))}\n"
-                        f"✍️ Подписание: {format_date(dates.get('signing_date'))}"
+                caption=f"📄 Календарный план закупки\n\n"
+                        f"Закон: {law_type}-ФЗ\n"
+                        f"Публикация: {format_date(dates.get('publication_date'))}\n"
+                        f"Подписание: {format_date(dates.get('signing_date'))}"
             )
-            # Удаляем временный файл
             try:
                 os.unlink(pdf_path)
             except:
                 pass
         else:
             await callback.message.edit_text(
-                "📄 **PDF со сроками**\n\n"
-                f"⚖️ Закон: {law_type}-ФЗ\n"
-                f"💰 НМЦК: {nmck:,.2f} руб.\n"
-                f"📅 Публикация: {format_date(dates.get('publication_date'))}\n"
-                f"✍️ Подписание: {format_date(dates.get('signing_date'))}\n\n"
-                "⚠️ Не удалось сгенерировать PDF. Попробуйте ещё раз."
+                "❌ Не удалось сгенерировать PDF. Попробуйте ещё раз."
             )
 
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка генерации PDF: {e}")
 
