@@ -7,6 +7,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 import locale
 
 try:
@@ -16,6 +18,15 @@ except:
         locale.setlocale(locale.LC_ALL, 'Russian_Russia.1251')
     except:
         pass
+
+# Регистрируем шрифт для кириллицы (попробуем стандартный)
+try:
+    # Попытка загрузить шрифт DejaVuSans (если есть в системе)
+    pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
+    FONT_NAME = 'DejaVuSans'
+except:
+    # Если нет, используем стандартный Helvetica (поддержка кириллицы ограничена)
+    FONT_NAME = 'Helvetica'
 
 
 def number_to_words_rubles(n: float) -> str:
@@ -45,14 +56,31 @@ class PDFGenerator:
         styles = getSampleStyleSheet()
         story = []
 
-        # Заголовок
+        # Создаём стиль с русским шрифтом
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
             fontSize=16,
             alignment=1,
-            spaceAfter=20
+            spaceAfter=20,
+            fontName=FONT_NAME
         )
+        normal_style = ParagraphStyle(
+            'NormalStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=12
+        )
+        table_header_style = ParagraphStyle(
+            'TableHeaderStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=10,
+            alignment=1,
+            textColor=colors.whitesmoke
+        )
+
+        # Заголовок
         story.append(Paragraph("Обоснование начальной (максимальной) цены контракта", title_style))
         story.append(Spacer(1, 12))
 
@@ -65,7 +93,7 @@ class PDFGenerator:
             f"Дата формирования: {procurement.get('created_date', datetime.now().strftime('%d.%m.%Y'))}"
         ]
         for line in info:
-            story.append(Paragraph(line, styles['Normal']))
+            story.append(Paragraph(line, normal_style))
         story.append(Spacer(1, 12))
 
         # Таблица позиций
@@ -94,21 +122,21 @@ class PDFGenerator:
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                 ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black)
             ]))
             story.append(table)
         else:
-            story.append(Paragraph("Нет данных для отображения", styles['Normal']))
+            story.append(Paragraph("Нет данных для отображения", normal_style))
 
         # Подпись
         story.append(Spacer(1, 30))
-        story.append(Paragraph(f"НМЦК: {data.get('total_nmck_word', '')}", styles['Normal']))
+        story.append(Paragraph(f"НМЦК: {data.get('total_nmck_word', '')}", normal_style))
         story.append(Spacer(1, 20))
-        story.append(Paragraph("_________________ / _________________ /", styles['Normal']))
-        story.append(Paragraph("«___» ___________ 2026 г.", styles['Normal']))
+        story.append(Paragraph("_________________ / _________________ /", normal_style))
+        story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
 
         doc.build(story)
         pdf_bytes = buffer.getvalue()
@@ -177,16 +205,18 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
         styles = getSampleStyleSheet()
         story = []
 
-        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20)
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20, fontName=FONT_NAME)
+        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=12)
+
         story.append(Paragraph("Календарный план закупки", title_style))
         story.append(Spacer(1, 12))
 
-        story.append(Paragraph(f"<b>Закон:</b> {law_type}", styles['Normal']))
-        story.append(Paragraph(f"<b>НМЦК:</b> {nmck:,.2f} руб.", styles['Normal']))
-        story.append(Paragraph(f"<b>Публикация:</b> {format_date(dates.get('publication_date'))}", styles['Normal']))
-        story.append(Paragraph(f"<b>Подписание:</b> {format_date(dates.get('signing_date'))}", styles['Normal']))
+        story.append(Paragraph(f"<b>Закон:</b> {law_type}", normal_style))
+        story.append(Paragraph(f"<b>НМЦК:</b> {nmck:,.2f} руб.", normal_style))
+        story.append(Paragraph(f"<b>Публикация:</b> {format_date(dates.get('publication_date'))}", normal_style))
+        story.append(Paragraph(f"<b>Подписание:</b> {format_date(dates.get('signing_date'))}", normal_style))
         story.append(Spacer(1, 20))
-        story.append(Paragraph("Документ сгенерирован автоматически", styles['Normal']))
+        story.append(Paragraph("Документ сгенерирован автоматически", normal_style))
 
         doc.build(story)
         pdf_bytes = buffer.getvalue()
