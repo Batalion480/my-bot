@@ -28,7 +28,12 @@ except:
 # ============================================================
 
 def number_to_words_rubles(n: float) -> str:
-    """Преобразует число в пропись (рубли) с копейками"""
+    """
+    Преобразует число в пропись (рубли) с копейками
+    """
+    if n is None:
+        return "ноль рублей 00 коп."
+    
     rubles = int(n)
     kopecks = int(round((n - rubles) * 100))
     
@@ -117,6 +122,149 @@ def format_date(d) -> str:
 
 
 # ============================================================
+# ПОДГОТОВКА ДАННЫХ ДЛЯ PDF
+# ============================================================
+
+def prepare_pdf_data(
+    procurement: Dict[str, Any],
+    suppliers: List[Dict[str, Any]],
+    timeline: List[Dict[str, Any]] = None,
+    company_name: str = "ООО «Ваша компания»",
+    responsible_person: str = "Иванов И.И.",
+    positions: List[Dict] = None,
+    method: str = "average"
+) -> Dict[str, Any]:
+    """
+    Подготавливает данные для генерации PDF
+    
+    Args:
+        procurement: Данные закупки
+        suppliers: Список поставщиков с ценами
+        timeline: Временная шкала (для сроков)
+        company_name: Название компании
+        responsible_person: ФИО ответственного
+        positions: Список позиций с детальными данными (для НМЦК)
+        method: 'average' или 'minimum'
+    
+    Returns:
+        Словарь с подготовленными данными для шаблона
+    """
+    if positions is None:
+        positions = []
+        for i, sup in enumerate(suppliers[:3], 1):
+            price = sup.get('price', 0)
+            positions.append({
+                "name": sup.get('note', f'Товар/услуга {i}'),
+                "okpd": "",
+                "quantity": 1,
+                "unit": "шт.",
+                "prices": [price, 0, 0],
+                "avg_price": price,
+                "variation": 0,
+                "total_price": price
+            })
+    
+    formatted_positions = []
+    for pos in positions:
+        prices = pos.get('prices', [0, 0, 0])
+        while len(prices) < 3:
+            prices.append(0)
+        prices = prices[:3]
+        
+        avg_price = sum(prices) / 3 if prices else 0
+        variation = 0
+        if avg_price > 0 and len(prices) >= 3:
+            variance = sum((p - avg_price) ** 2 for p in prices) / 3
+            std_dev = variance ** 0.5
+            variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
+        
+        total_price = avg_price * pos.get('quantity', 1)
+        
+        formatted_positions.append({
+            "name": pos.get('name', ''),
+            "okpd": pos.get('okpd', ''),
+            "quantity": pos.get('quantity', 1),
+            "unit": pos.get('unit', 'шт.'),
+            "prices": prices,
+            "avg_price": avg_price,
+            "variation": variation,
+            "total_price": total_price
+        })
+    
+    total_nmck = sum(p['total_price'] for p in formatted_positions)
+    
+    return {
+        "procurement": {
+            "title": procurement.get('title', 'Закупка'),
+            "law_type": procurement.get('law_type', '44-ФЗ'),
+            "nmck": procurement.get('nmck', total_nmck),
+            "nmck_method": "Средняя арифметическая" if method == "average" else "Минимальная цена (письмо Минфина)",
+            "nmck_source": procurement.get('nmck_source', 'ч. 6 ст. 22 44-ФЗ'),
+            "company_name": company_name,
+            "responsible_person": responsible_person,
+            "created_date": datetime.now().strftime("%d.%m.%Y")
+        },
+        "suppliers": suppliers,
+        "positions": formatted_positions,
+        "total_nmck": total_nmck,
+        "total_nmck_word": number_to_words_rubles(total_nmck),
+        "method": method,
+        "timeline": timeline or []
+    }
+
+
+# ============================================================
+# ГЕНЕРАЦИЯ PDF
+# ============================================================
+
+class PDFGenerator:
+    """Класс для генерации PDF-документов"""
+    
+    def __init__(self, template_name: str = 'procurement_report.html'):
+        self.template_dir = get_template_dir()
+        self.env = Environment(loader=FileSystemLoader(self.template_dir))
+        self.template_name = template_name
+    
+    def generate(self, data: Dict[str, Any]) -> bytes:
+        """
+        Генерирует PDF из данных
+        
+        Args:
+            data: Словарь с данными для шаблона
+        
+        Returns:
+            Байты PDF-файла
+        """
+        template = self.env.get_template(self.template_name)
+        html_content = template.render(**data)
+        
+        # Создаём PDF в памяти
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        return pdf_bytes
+    
+    def generate_to_file(self, data: Dict[str, Any], filename: str = None) -> str:
+        """
+        Генерирует PDF и сохраняет в файл
+        
+        Args:
+            data: Словарь с данными для шаблона
+            filename: Имя файла (если None - создаётся временный)
+        
+        Returns:
+            Путь к созданному PDF-файлу
+        """
+        if filename is None:
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                filename = tmp.name
+        
+        template = self.env.get_template(self.template_name)
+        html_content = template.render(**data)
+        
+        HTML(string=html_content).write_pdf(filename)
+        return filename
+
+
+# ============================================================
 # ГЕНЕРАЦИЯ PDF ДЛЯ СРОКОВ
 # ============================================================
 
@@ -129,19 +277,7 @@ def generate_terms_pdf(
 ) -> Optional[str]:
     """
     Генерирует PDF-отчёт со сроками
-    
-    Args:
-        dates: Словарь с датами
-        law_type: Тип закона
-        nmck: НМЦК
-        company_name: Название компании
-        responsible_person: ФИО ответственного
-    
-    Returns:
-        Путь к созданному PDF-файлу
     """
-    
-    # Шаблон HTML для сроков
     html_content = f"""
     <!DOCTYPE html>
     <html lang="ru">
@@ -210,12 +346,6 @@ def generate_terms_pdf(
             }}
             .signature {{
                 margin-top: 50px;
-            }}
-            .signature-line {{
-                display: inline-block;
-                width: 200px;
-                border-bottom: 1px solid #000;
-                margin: 0 10px;
             }}
             .note {{
                 font-size: 12px;
@@ -335,43 +465,17 @@ def generate_terms_pdf(
         return None
 
 
-# ============================================================
-# ГЕНЕРАЦИЯ PDF ДЛЯ НМЦК
-# ============================================================
-
-class PDFGenerator:
-    """Класс для генерации PDF-документов"""
-    
-    def __init__(self, template_name: str = 'procurement_report.html'):
-        self.template_dir = get_template_dir()
-        self.env = Environment(loader=FileSystemLoader(self.template_dir))
-        self.template_name = template_name
-    
-    def generate(self, data: Dict[str, Any]) -> bytes:
-        """Генерирует PDF из данных"""
-        template = self.env.get_template(self.template_name)
-        html_content = template.render(**data)
-        return HTML(string=html_content).write_pdf()
-
-
-# Функция для обратной совместимости
-def prepare_pdf_data(
+# Для обратной совместимости
+def prepare_nmck_pdf_data(
     procurement: Dict,
     suppliers: List[Dict],
-    timeline: List[Dict] = None,
-    company_name: str = "ООО «Ваша компания»",
-    responsible_person: str = "Иванов И.И.",
     positions: List[Dict] = None,
     method: str = "average"
 ) -> Dict:
-    """Подготавливает данные для PDF"""
-    return {
-        "procurement": procurement,
-        "suppliers": suppliers,
-        "timeline": timeline or [],
-        "company_name": company_name,
-        "responsible_person": responsible_person,
-        "positions": positions or [],
-        "method": method,
-        "total_nmck_word": number_to_words_rubles(procurement.get('nmck', 0))
-    }
+    """Устаревшая функция, используйте prepare_pdf_data"""
+    return prepare_pdf_data(
+        procurement=procurement,
+        suppliers=suppliers,
+        positions=positions,
+        method=method
+    )
