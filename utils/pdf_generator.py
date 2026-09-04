@@ -6,6 +6,8 @@ from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 import locale
 
+# v2 - исправленная версия для WeasyPrint 60.1
+
 try:
     locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
 except:
