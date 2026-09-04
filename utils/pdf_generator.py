@@ -40,12 +40,10 @@ class PDFGenerator:
         self.template_dir = get_template_dir()
         self.env = Environment(loader=FileSystemLoader(self.template_dir))
         self.template_name = template_name
-    
+
     def generate(self, data: Dict[str, Any]) -> bytes:
         template = self.env.get_template(self.template_name)
         html_content = template.render(**data)
-        
-        # Упрощённый вариант без FontConfiguration
         pdf_bytes = HTML(string=html_content).write_pdf()
         return pdf_bytes
 
@@ -117,5 +115,5 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
             HTML(string=html).write_pdf(pdf_path)
             return pdf_path
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка генерации PDF: {e}")
         return None
