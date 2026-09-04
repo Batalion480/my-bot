@@ -51,4 +51,4 @@ build/
 
 # Папка с загруженными файлами (если есть)
 uploads/
-downloads/
+downloads/.env 
