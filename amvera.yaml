@@ -6,7 +6,8 @@ app:
   version: 3.12
 
 install:
-  - pip install --only-binary :all: -r requirements.txt
+  - pip install --upgrade pip setuptools wheel
+  - pip install -r requirements.txt
 
 run:
   - python main.py
