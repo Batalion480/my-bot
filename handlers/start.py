@@ -1,7 +1,6 @@
 from aiogram import Router, types
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State
+from aiogram.fsm.context import FSMContext  # ← ДОБАВЛЕНО!
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from utils.database import Database
