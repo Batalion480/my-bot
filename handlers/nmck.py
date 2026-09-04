@@ -276,7 +276,8 @@ async def process_quantity(message: Message, state: FSMContext):
         nmck=result["nmck"],
         quantity=quantity,
         nmck_total=nmck_total,
-        prices=prices
+        prices=prices,
+        nmck_for_terms=nmck_total  # ← СОХРАНЯЕМ ДЛЯ СРОКОВ
     )
     
     method_text = "средней цене" if method == "average" else "минимальной цене"
@@ -293,12 +294,12 @@ async def process_quantity(message: Message, state: FSMContext):
     
     builder = InlineKeyboardBuilder()
     builder.button(text="📄 Сформировать PDF", callback_data="pdf_create")
-    builder.button(text="📅 Сроки", callback_data="go_to_terms")
+    builder.button(text="📅 Сроки", callback_data="go_to_terms")  # ← БЕЗ УДАЛЕНИЯ СООБЩЕНИЯ
     builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
     builder.adjust(1)
     
     await state.set_state(NMCKStates.waiting_for_final_action)
-    await message.answer(text, reply_markup=builder.as_markup())
+    await message.answer(text, reply_markup=builder.as_markup())  # ← ОТПРАВЛЯЕМ НОВОЕ СООБЩЕНИЕ
 
 
 # ============================================================
@@ -637,7 +638,8 @@ async def calculate_multi_position_nmck(message: types.Message, state: FSMContex
         nmck=result['nmck'], 
         nmck_total=total_nmck, 
         positions=positions,
-        calculation_method=method
+        calculation_method=method,
+        nmck_for_terms=total_nmck  # ← СОХРАНЯЕМ ДЛЯ СРОКОВ
     )
     
     # Переходим к сбору реквизитов (для много позиций)
