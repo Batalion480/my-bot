@@ -28,20 +28,10 @@ except:
 # ============================================================
 
 def number_to_words_rubles(n: float) -> str:
-    """
-    Преобразует число в пропись (рубли) с копейками
-    
-    Args:
-        n: Сумма в рублях
-    
-    Returns:
-        Строка с суммой прописью
-    """
-    # Простая версия для демонстрации
+    """Преобразует число в пропись (рубли) с копейками"""
     rubles = int(n)
     kopecks = int(round((n - rubles) * 100))
     
-    # Словари для склонения
     units = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять']
     teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 
              'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать']
@@ -58,7 +48,6 @@ def number_to_words_rubles(n: float) -> str:
         
         result = []
         
-        # Миллионы
         if num >= 1000000:
             millions = num // 1000000
             num %= 1000000
@@ -69,7 +58,6 @@ def number_to_words_rubles(n: float) -> str:
             else:
                 result.append(f'{num_to_words(millions)} миллионов')
         
-        # Тысячи
         if num >= 1000:
             thousands = num // 1000
             num %= 1000
@@ -82,13 +70,11 @@ def number_to_words_rubles(n: float) -> str:
             else:
                 result.append(f'{num_to_words(thousands)} тысяч')
         
-        # Сотни
         if num >= 100:
             hundreds_part = num // 100
             num %= 100
             result.append(hundreds[hundreds_part])
         
-        # Десятки и единицы
         if num >= 20:
             tens_part = num // 10
             num %= 10
@@ -102,10 +88,8 @@ def number_to_words_rubles(n: float) -> str:
         
         return ' '.join([r for r in result if r])
     
-    # Формируем результат
     rubles_words = num_to_words(rubles) if rubles > 0 else 'ноль'
     
-    # Склонение "рубль"
     if rubles % 10 == 1 and rubles % 100 != 11:
         ruble_word = 'рубль'
     elif 2 <= rubles % 10 <= 4 and (rubles % 100 < 10 or rubles % 100 >= 20):
@@ -113,7 +97,6 @@ def number_to_words_rubles(n: float) -> str:
     else:
         ruble_word = 'рублей'
     
-    # Копейки
     kopecks_word = f"{kopecks:02d} коп."
     
     return f"{rubles_words} {ruble_word} {kopecks_word}"
@@ -124,103 +107,236 @@ def get_template_dir() -> str:
     return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')
 
 
+def format_date(d) -> str:
+    """Форматирует дату в формат ДД.ММ.ГГГГ"""
+    if d is None:
+        return "—"
+    if isinstance(d, str):
+        return d
+    return d.strftime("%d.%m.%Y")
+
+
 # ============================================================
-# ПОДГОТОВКА ДАННЫХ ДЛЯ PDF
+# ГЕНЕРАЦИЯ PDF ДЛЯ СРОКОВ
 # ============================================================
 
-def prepare_pdf_data(
-    procurement: Dict[str, Any],
-    suppliers: List[Dict[str, Any]],
-    timeline: List[Dict[str, Any]] = None,
+def generate_terms_pdf(
+    dates: Dict[str, Any],
+    law_type: str = "44-ФЗ",
+    nmck: float = None,
     company_name: str = "ООО «Ваша компания»",
-    responsible_person: str = "Иванов И.И.",
-    positions: List[Dict] = None,
-    method: str = "average"
-) -> Dict[str, Any]:
+    responsible_person: str = "Иванов И.И."
+) -> Optional[str]:
     """
-    Подготавливает данные для генерации PDF
+    Генерирует PDF-отчёт со сроками
     
     Args:
-        procurement: Данные закупки
-        suppliers: Список поставщиков с ценами
-        timeline: Временная шкала (для сроков)
+        dates: Словарь с датами
+        law_type: Тип закона
+        nmck: НМЦК
         company_name: Название компании
         responsible_person: ФИО ответственного
-        positions: Список позиций с детальными данными (для НМЦК)
-        method: 'average' или 'minimum'
     
     Returns:
-        Словарь с подготовленными данными для шаблона
+        Путь к созданному PDF-файлу
     """
-    if positions is None:
-        # Если позиции не переданы, формируем из suppliers
-        positions = []
-        for i, sup in enumerate(suppliers[:3], 1):
-            price = sup.get('price', 0)
-            positions.append({
-                "name": sup.get('note', f'Товар/услуга {i}'),
-                "okpd": "",
-                "quantity": 1,
-                "unit": "шт.",
-                "prices": [price, 0, 0],
-                "avg_price": price,
-                "variation": 0,
-                "total_price": price
-            })
     
-    # Рассчитываем среднюю цену и вариацию для каждой позиции
-    formatted_positions = []
-    for pos in positions:
-        prices = pos.get('prices', [0, 0, 0])
-        # Дополняем до 3 цен
-        while len(prices) < 3:
-            prices.append(0)
-        prices = prices[:3]
+    # Шаблон HTML для сроков
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <title>Календарный план закупки</title>
+        <style>
+            body {{
+                font-family: 'Times New Roman', Times, serif;
+                font-size: 14px;
+                margin: 40px;
+                line-height: 1.6;
+            }}
+            h1 {{
+                text-align: center;
+                font-size: 18px;
+                font-weight: bold;
+                margin-bottom: 30px;
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 30px;
+            }}
+            .info-block {{
+                margin-bottom: 20px;
+            }}
+            .info-block table {{
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            .info-block td {{
+                padding: 8px 10px;
+                border: 1px solid #000;
+            }}
+            .info-block td:first-child {{
+                font-weight: bold;
+                width: 35%;
+                background-color: #f5f5f5;
+            }}
+            .info-block td:last-child {{
+                width: 65%;
+            }}
+            .dates-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }}
+            .dates-table th {{
+                background-color: #e8e8e8;
+                border: 1px solid #000;
+                padding: 10px;
+                text-align: center;
+                font-weight: bold;
+            }}
+            .dates-table td {{
+                border: 1px solid #000;
+                padding: 8px 10px;
+                text-align: center;
+            }}
+            .dates-table tr:nth-child(even) {{
+                background-color: #f9f9f9;
+            }}
+            .footer {{
+                margin-top: 40px;
+                text-align: right;
+            }}
+            .signature {{
+                margin-top: 50px;
+            }}
+            .signature-line {{
+                display: inline-block;
+                width: 200px;
+                border-bottom: 1px solid #000;
+                margin: 0 10px;
+            }}
+            .note {{
+                font-size: 12px;
+                margin-top: 30px;
+                color: #555;
+                border-top: 1px solid #ddd;
+                padding-top: 15px;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>КАЛЕНДАРНЫЙ ПЛАН ЗАКУПКИ</h1>
         
-        avg_price = sum(prices) / 3 if prices else 0
-        variation = 0
-        if avg_price > 0 and len(prices) >= 3:
-            variance = sum((p - avg_price) ** 2 for p in prices) / 3
-            std_dev = variance ** 0.5
-            variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
+        <div class="header">
+            <p><strong>Обоснование сроков проведения закупки</strong></p>
+            <p>по {law_type}</p>
+        </div>
         
-        total_price = avg_price * pos.get('quantity', 1)
+        <div class="info-block">
+            <table>
+                <tr>
+                    <td>Наименование заказчика</td>
+                    <td>{company_name}</td>
+                </tr>
+                <tr>
+                    <td>Ответственное лицо</td>
+                    <td>{responsible_person}</td>
+                </tr>
+                <tr>
+                    <td>НМЦК</td>
+                    <td>{nmck:,.2f} руб. ({number_to_words_rubles(nmck)})</td>
+                </tr>
+                <tr>
+                    <td>Дата формирования</td>
+                    <td>{datetime.now().strftime("%d.%m.%Y")}</td>
+                </tr>
+            </table>
+        </div>
         
-        formatted_positions.append({
-            "name": pos.get('name', ''),
-            "okpd": pos.get('okpd', ''),
-            "quantity": pos.get('quantity', 1),
-            "unit": pos.get('unit', 'шт.'),
-            "prices": prices,
-            "avg_price": avg_price,
-            "variation": variation,
-            "total_price": total_price
-        })
+        <h2 style="text-align: center; font-size: 16px;">График проведения закупки</h2>
+        
+        <table class="dates-table">
+            <thead>
+                <tr>
+                    <th>№ п/п</th>
+                    <th>Этап закупки</th>
+                    <th>Дата</th>
+                    <th>Кол-во дней</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>1</td>
+                    <td>Публикация извещения</td>
+                    <td>{format_date(dates.get('publication_date'))}</td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>Окончание подачи заявок</td>
+                    <td>{format_date(dates.get('bid_end_date'))}</td>
+                    <td>{dates.get('applied_bid_days', '—')}</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>Аукцион / Вскрытие конвертов</td>
+                    <td>{format_date(dates.get('auction_date', dates.get('bid_end_date')))}</td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td>4</td>
+                    <td>Рассмотрение заявок</td>
+                    <td>{format_date(dates.get('review_date', dates.get('consideration_date', dates.get('bid_end_date'))))}</td>
+                    <td>{dates.get('applied_review_days', '—')}</td>
+                </tr>
+                <tr>
+                    <td>5</td>
+                    <td>Протокол подведения итогов</td>
+                    <td>{format_date(dates.get('protocol_date', dates.get('consideration_date', dates.get('bid_end_date'))))}</td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td>6</td>
+                    <td>Подписание контракта</td>
+                    <td>{format_date(dates.get('signing_date'))}</td>
+                    <td>{dates.get('applied_signing_days', '—')}</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div class="note">
+            <p><strong>Примечания:</strong></p>
+            <p>• Сроки рассчитаны с учётом рабочих дней (без учёта выходных и праздничных дней).</p>
+            <p>• Источник: {dates.get('law_source', law_type)}</p>
+            <p>• Документ сгенерирован автоматически в боте «Смета+Срок».</p>
+        </div>
+        
+        <div class="signature">
+            <p style="text-align: center;">
+                Руководитель: _________________ / {responsible_person} /
+            </p>
+            <p style="text-align: center; margin-top: 10px;">
+                М.П.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
     
-    total_nmck = sum(p['total_price'] for p in formatted_positions)
-    
-    return {
-        "procurement": {
-            "title": procurement.get('title', 'Закупка'),
-            "law_type": procurement.get('law_type', '44-ФЗ'),
-            "nmck": procurement.get('nmck', total_nmck),
-            "nmck_method": "Средняя арифметическая" if method == "average" else "Минимальная цена (письмо Минфина)",
-            "nmck_source": procurement.get('nmck_source', 'ч. 6 ст. 22 44-ФЗ'),
-            "company_name": company_name,
-            "responsible_person": responsible_person,
-            "created_date": datetime.now().strftime("%d.%m.%Y")
-        },
-        "suppliers": suppliers,
-        "positions": formatted_positions,
-        "total_nmck": total_nmck,
-        "total_nmck_word": number_to_words_rubles(total_nmck),
-        "method": method,
-        "timeline": timeline or []
-    }
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            pdf_path = tmp.name
+            HTML(string=html_content).write_pdf(pdf_path)
+            return pdf_path
+    except Exception as e:
+        print(f"❌ Ошибка генерации PDF: {e}")
+        return None
 
 
 # ============================================================
-# ГЕНЕРАЦИЯ PDF
+# ГЕНЕРАЦИЯ PDF ДЛЯ НМЦК
 # ============================================================
 
 class PDFGenerator:
@@ -232,157 +348,30 @@ class PDFGenerator:
         self.template_name = template_name
     
     def generate(self, data: Dict[str, Any]) -> bytes:
-        """
-        Генерирует PDF из данных
-        
-        Args:
-            data: Словарь с данными для шаблона
-        
-        Returns:
-            Байты PDF-файла
-        """
+        """Генерирует PDF из данных"""
         template = self.env.get_template(self.template_name)
         html_content = template.render(**data)
-        
-        # Создаём PDF в памяти
-        pdf_bytes = HTML(string=html_content).write_pdf()
-        return pdf_bytes
-    
-    def generate_to_file(self, data: Dict[str, Any], filename: str = None) -> str:
-        """
-        Генерирует PDF и сохраняет в файл
-        
-        Args:
-            data: Словарь с данными для шаблона
-            filename: Имя файла (если None - создаётся временный)
-        
-        Returns:
-            Путь к созданному PDF-файлу
-        """
-        if filename is None:
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-                filename = tmp.name
-        
-        template = self.env.get_template(self.template_name)
-        html_content = template.render(**data)
-        
-        HTML(string=html_content).write_pdf(filename)
-        return filename
+        return HTML(string=html_content).write_pdf()
 
 
-# ============================================================
-# УПРОЩЁННЫЕ ФУНКЦИИ ДЛЯ БЫСТРОГО ВЫЗОВА
-# ============================================================
-
-def generate_nmck_pdf(
-    positions: List[Dict],
-    total_nmck: float,
-    method: str = 'average',
-    variation_warning: bool = False,
-    law_type: str = "44-ФЗ",
-    company_name: str = "ООО «Ваша компания»",
-    responsible_person: str = "Иванов И.И."
-) -> str:
-    """
-    Генерирует PDF-отчёт обоснования НМЦК
-    
-    Args:
-        positions: список позиций с полями:
-            - name: название
-            - okpd: ОКПД2/КТРУ
-            - quantity: количество
-            - unit: единица измерения
-            - prices: список из 3 цен
-            - avg_price: средняя цена
-            - variation: коэффициент вариации
-            - total_price: итоговая цена позиции
-        total_nmck: общая НМЦК
-        method: 'average' или 'minimum'
-        variation_warning: превышен ли коэффициент вариации
-        law_type: тип закона
-        company_name: название компании
-        responsible_person: ФИО ответственного
-    
-    Returns:
-        Путь к созданному PDF-файлу
-    """
-    # Подготавливаем данные
-    data = {
-        "positions": positions,
-        "total_nmck": total_nmck,
-        "total_nmck_word": number_to_words_rubles(total_nmck),
-        "method": method,
-        "variation_warning": variation_warning,
-        "procurement": {
-            "law_type": law_type,
-            "company_name": company_name,
-            "responsible_person": responsible_person,
-            "created_date": datetime.now().strftime("%d.%m.%Y")
-        }
-    }
-    
-    # Генерируем PDF
-    generator = PDFGenerator('procurement_report.html')
-    return generator.generate_to_file(data)
-
-
-def generate_terms_pdf(
-    dates: Dict[str, Any],
-    law_type: str = "44-ФЗ",
-    nmck: float = None,
-    company_name: str = "ООО «Ваша компания»",
-    responsible_person: str = "Иванов И.И."
-) -> Optional[str]:
-    """
-    Генерирует PDF-отчёт со сроками (планируется)
-    
-    Args:
-        dates: Словарь с датами
-        law_type: Тип закона
-        nmck: НМЦК
-        company_name: Название компании
-        responsible_person: ФИО ответственного
-    
-    Returns:
-        Путь к созданному PDF-файлу или None (если не реализовано)
-    """
-    # TODO: Реализовать полноценную генерацию PDF для сроков
-    # Создаём временный файл-заглушку
-    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-        # Простая заглушка
-        from weasyprint import HTML
-        html = f"""
-        <html>
-        <head><meta charset="UTF-8"></head>
-        <body style="font-family: Times New Roman; padding: 40px;">
-            <h1 style="text-align: center;">КАЛЕНДАРНЫЙ ПЛАН ЗАКУПКИ</h1>
-            <p><strong>Закон:</strong> {law_type}</p>
-            <p><strong>НМЦК:</strong> {nmck:,.2f} руб.</p>
-            <p><strong>Дата публикации:</strong> {format_date(dates.get('publication_date'))}</p>
-            <p><strong>Окончание подачи заявок:</strong> {format_date(dates.get('bid_end_date'))}</p>
-            <p><strong>Рассмотрение:</strong> {format_date(dates.get('review_date', dates.get('consideration_date')))}</p>
-            <p><strong>Подписание контракта:</strong> {format_date(dates.get('signing_date'))}</p>
-            <hr>
-            <p style="text-align: center;">Документ сгенерирован автоматически</p>
-            <p style="text-align: center;">{company_name}</p>
-        </body>
-        </html>
-        """
-        HTML(string=html).write_pdf(tmp.name)
-        return tmp.name
-
-
-# Для обратной совместимости с старым кодом
-def prepare_nmck_pdf_data(
+# Функция для обратной совместимости
+def prepare_pdf_data(
     procurement: Dict,
     suppliers: List[Dict],
+    timeline: List[Dict] = None,
+    company_name: str = "ООО «Ваша компания»",
+    responsible_person: str = "Иванов И.И.",
     positions: List[Dict] = None,
     method: str = "average"
 ) -> Dict:
-    """Устаревшая функция, используйте prepare_pdf_data"""
-    return prepare_pdf_data(
-        procurement=procurement,
-        suppliers=suppliers,
-        positions=positions,
-        method=method
-    )
+    """Подготавливает данные для PDF"""
+    return {
+        "procurement": procurement,
+        "suppliers": suppliers,
+        "timeline": timeline or [],
+        "company_name": company_name,
+        "responsible_person": responsible_person,
+        "positions": positions or [],
+        "method": method,
+        "total_nmck_word": number_to_words_rubles(procurement.get('nmck', 0))
+    }

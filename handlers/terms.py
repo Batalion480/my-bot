@@ -3,6 +3,7 @@
 # Обработчик расчёта сроков по 44-ФЗ и 223-ФЗ
 # ============================================================
 
+import os
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -475,10 +476,18 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
     dates = data.get("dates")
     law_type = data.get("law_type", "44")
     nmck = data.get("nmck")
+    procedure = data.get("procedure")
 
     if not dates:
         await callback.message.edit_text("⚠️ Данные не найдены. Начните расчёт заново.")
         return
+
+    # Получаем правила из БД для отображения в PDF
+    law_type_db = f"{law_type}-FZ"
+    rules = await db.get_all_rules_for_procedure(law_type_db, procedure)
+    
+    # Добавляем правила в dates для PDF
+    dates['rules'] = rules
 
     # Генерируем PDF
     try:
@@ -490,13 +499,14 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
             responsible_person="Иванов И.И."
         )
 
-        if pdf_path:
+        if pdf_path and os.path.exists(pdf_path):
+            await callback.message.delete()
             await callback.message.answer_document(
                 types.FSInputFile(pdf_path),
                 caption=f"📄 **Календарный план закупки**\n\n"
                         f"⚖️ Закон: {law_type}-ФЗ\n"
-                        f"📅 Публикация: {format_date(dates['publication_date'])}\n"
-                        f"✍️ Подписание: {format_date(dates['signing_date'])}"
+                        f"📅 Публикация: {format_date(dates.get('publication_date'))}\n"
+                        f"✍️ Подписание: {format_date(dates.get('signing_date'))}"
             )
             # Удаляем временный файл
             try:
@@ -508,9 +518,9 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
                 "📄 **PDF со сроками**\n\n"
                 f"⚖️ Закон: {law_type}-ФЗ\n"
                 f"💰 НМЦК: {nmck:,.2f} руб.\n"
-                f"📅 Публикация: {format_date(dates['publication_date'])}\n"
-                f"✍️ Подписание: {format_date(dates['signing_date'])}\n\n"
-                "⚠️ Функция генерации PDF в разработке."
+                f"📅 Публикация: {format_date(dates.get('publication_date'))}\n"
+                f"✍️ Подписание: {format_date(dates.get('signing_date'))}\n\n"
+                "⚠️ Не удалось сгенерировать PDF. Попробуйте ещё раз."
             )
 
     except Exception as e:
