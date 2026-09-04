@@ -6,7 +6,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from reportlab.lib.units import inch
+from reportlab.lib.units import inch, cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import locale
@@ -19,13 +19,14 @@ except:
     except:
         pass
 
-# Регистрируем шрифт для кириллицы (попробуем стандартный)
-try:
-    # Попытка загрузить шрифт DejaVuSans (если есть в системе)
-    pdfmetrics.registerFont(TTFont('DejaVuSans', 'DejaVuSans.ttf'))
+# Регистрируем шрифт для кириллицы
+FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'fonts')
+FONT_FILE = os.path.join(FONT_DIR, 'DejaVuSans.ttf')
+if os.path.exists(FONT_FILE):
+    pdfmetrics.registerFont(TTFont('DejaVuSans', FONT_FILE))
     FONT_NAME = 'DejaVuSans'
-except:
-    # Если нет, используем стандартный Helvetica (поддержка кириллицы ограничена)
+else:
+    # Если шрифта нет, используем Helvetica (кириллица не будет отображаться)
     FONT_NAME = 'Helvetica'
 
 
@@ -52,16 +53,23 @@ class PDFGenerator:
     def generate(self, data: Dict[str, Any]) -> bytes:
         import io
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72)
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
         styles = getSampleStyleSheet()
         story = []
 
-        # Создаём стиль с русским шрифтом
+        # Стили
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
             fontSize=16,
-            alignment=1,
+            alignment=1,  # center
             spaceAfter=20,
             fontName=FONT_NAME
         )
@@ -69,75 +77,168 @@ class PDFGenerator:
             'NormalStyle',
             parent=styles['Normal'],
             fontName=FONT_NAME,
-            fontSize=12
+            fontSize=11
+        )
+        bold_style = ParagraphStyle(
+            'BoldStyle',
+            parent=normal_style,
+            fontName=FONT_NAME,
+            fontSize=11,
+            alignment=1
         )
         table_header_style = ParagraphStyle(
             'TableHeaderStyle',
             parent=styles['Normal'],
             fontName=FONT_NAME,
-            fontSize=10,
+            fontSize=9,
             alignment=1,
-            textColor=colors.whitesmoke
+            textColor=colors.whitesmoke,
+            leading=12
+        )
+        table_cell_style = ParagraphStyle(
+            'TableCellStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=8,
+            alignment=1,
+            leading=10
+        )
+        table_cell_left_style = ParagraphStyle(
+            'TableCellLeftStyle',
+            parent=table_cell_style,
+            alignment=0  # left
         )
 
         # Заголовок
-        story.append(Paragraph("Обоснование начальной (максимальной) цены контракта", title_style))
+        story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
         story.append(Spacer(1, 12))
 
         # Информация о закупке
         procurement = data.get('procurement', {})
-        info = [
-            f"Наименование заказчика: {procurement.get('company_name', 'ООО «Ваша компания»')}",
-            f"Ответственное лицо: {procurement.get('responsible_person', 'Иванов И.И.')}",
-            f"Закон: {procurement.get('law_type', '44-ФЗ')}",
-            f"Дата формирования: {procurement.get('created_date', datetime.now().strftime('%d.%m.%Y'))}"
+        info_data = [
+            ("Наименование заказчика:", procurement.get('company_name', 'ООО «Ваша компания»')),
+            ("Ответственное лицо:", procurement.get('responsible_person', 'Иванов И.И.')),
+            ("Закон:", procurement.get('law_type', '44-ФЗ')),
+            ("Дата формирования:", procurement.get('created_date', datetime.now().strftime('%d.%m.%Y')))
         ]
-        for line in info:
-            story.append(Paragraph(line, normal_style))
+        for label, value in info_data:
+            story.append(Paragraph(f"<b>{label}</b> {value}", normal_style))
         story.append(Spacer(1, 12))
 
         # Таблица позиций
         positions = data.get('positions', [])
-        if positions:
-            table_data = [["№", "Наименование", "Кол-во", "Ед.", "Цена1", "Цена2", "Цена3", "Средняя", "Итого"]]
+        if not positions:
+            story.append(Paragraph("Нет данных для отображения", normal_style))
+        else:
+            # Заголовки таблицы
+            table_data = [
+                [
+                    "№ п/п",
+                    "Наименование позиции",
+                    "ОКПД2/КТРУ",
+                    "Кол-во",
+                    "Ед. изм.",
+                    "Коммерческое предложение 1",
+                    "Коммерческое предложение 2",
+                    "Коммерческое предложение 3",
+                    "Средняя цена за ед. (руб.)",
+                    "Коэф. вариации (%)",
+                    "Итого (руб.)"
+                ]
+            ]
+            # Добавляем подзаголовки для КП (цена за ед. и итоговая цена – мы показываем только цену за единицу)
+            # Для соответствия образцу можно добавить две строки, но упростим, показывая только цену за ед.
+
             for i, pos in enumerate(positions, 1):
                 row = [
                     str(i),
                     pos.get('name', ''),
+                    pos.get('okpd', ''),
                     str(pos.get('quantity', 1)),
                     pos.get('unit', 'шт.'),
                     f"{pos.get('prices', [0,0,0])[0]:.2f}",
                     f"{pos.get('prices', [0,0,0])[1]:.2f}",
                     f"{pos.get('prices', [0,0,0])[2]:.2f}",
                     f"{pos.get('avg_price', 0):.2f}",
+                    f"{pos.get('variation', 0):.2f}",
                     f"{pos.get('total_price', 0):.2f}"
                 ]
                 table_data.append(row)
-            
-            total_nmck = data.get('total_nmck', 0)
-            table_data.append(["", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
 
-            table = Table(table_data, colWidths=[0.5*inch, 2*inch, 0.7*inch, 0.5*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.8*inch])
+            # Итоговая строка
+            total_nmck = data.get('total_nmck', 0)
+            table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
+
+            # Ширина колонок
+            col_widths = [
+                0.6*cm,   # №
+                4.0*cm,   # Наименование
+                2.5*cm,   # ОКПД2
+                1.2*cm,   # Кол-во
+                1.2*cm,   # Ед.изм.
+                1.8*cm,   # КП1
+                1.8*cm,   # КП2
+                1.8*cm,   # КП3
+                1.8*cm,   # Средняя
+                1.8*cm,   # Вариация
+                1.8*cm    # Итого
+            ]
+
+            table = Table(table_data, colWidths=col_widths, repeatRows=1)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                 ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
                 ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
+                ('FONTSIZE', (0, -1), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ('ALIGN', (1, 1), (1, -2), 'LEFT'),  # Наименование выравниваем влево
             ]))
             story.append(table)
+
+        # Примечание в зависимости от метода
+        method = data.get('method', 'average')
+        story.append(Spacer(1, 20))
+        if method == 'minimum':
+            note_text = (
+                "Расчет начальной (максимальной) цены контракта производится по минимальному ценовому предложению "
+                "в соответствии с письмом Минфина России от 08.09.2017 № 24-01-09/58179 «Об определении и обосновании НМЦК "
+                "методом сопоставимых рыночных цен» и частью 2 статьи 72 Бюджетного кодекса Российской Федерации."
+            )
         else:
-            story.append(Paragraph("Нет данных для отображения", normal_style))
+            note_text = (
+                "Для определения однородности совокупности значений средняя цена за единицу товара рассчитана по формуле "
+                "Цед.ср. = (∑ni=1 Цi.)/n в соответствии с Приказом МЭР РФ от 02.10.2013 № 567, где:\n"
+                "Цед.ср. – средняя цена за единицу товара;\n"
+                "n – количество значений, используемых в расчете;\n"
+                "i – номер источника ценовой информации;\n"
+                "Цi – цена единицы товара."
+            )
+        # Заменяем переносы строк на <br/> для Paragraph
+        note_text = note_text.replace('\n', '<br/>')
+        story.append(Paragraph(note_text, normal_style))
+
+        # Решение
+        story.append(Spacer(1, 30))
+        total_word = data.get('total_nmck_word', '')
+        total_num = data.get('total_nmck', 0)
+        story.append(Paragraph(
+            f"<b>Решение:</b> Признать начальной (максимальной) ценой контракта <b>{total_word}</b> "
+            f"({total_num:,.2f}) рублей 00 копеек",
+            normal_style
+        ))
 
         # Подпись
-        story.append(Spacer(1, 30))
-        story.append(Paragraph(f"НМЦК: {data.get('total_nmck_word', '')}", normal_style))
-        story.append(Spacer(1, 20))
+        story.append(Spacer(1, 40))
         story.append(Paragraph("_________________ / _________________ /", normal_style))
         story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
 
+        # Сборка PDF
         doc.build(story)
         pdf_bytes = buffer.getvalue()
         buffer.close()
@@ -162,6 +263,7 @@ def prepare_pdf_data(
             prices.append(0)
         prices = prices[:3]
         avg_price = sum(prices) / 3 if prices else 0
+        variation = pos.get('variation', 0)
         total_price = avg_price * pos.get('quantity', 1)
         formatted_positions.append({
             "name": pos.get('name', ''),
@@ -170,7 +272,7 @@ def prepare_pdf_data(
             "unit": pos.get('unit', 'шт.'),
             "prices": prices,
             "avg_price": avg_price,
-            "variation": 0,
+            "variation": variation,
             "total_price": total_price
         })
     total_nmck = sum(p['total_price'] for p in formatted_positions)
@@ -193,10 +295,11 @@ def prepare_pdf_data(
 
 
 def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", responsible_person=""):
+    """Генерация PDF для календарного плана (упрощённая версия)"""
     try:
         import io
         from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib import colors
 
