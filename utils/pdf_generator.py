@@ -26,7 +26,6 @@ if os.path.exists(FONT_FILE):
     pdfmetrics.registerFont(TTFont('DejaVuSans', FONT_FILE))
     FONT_NAME = 'DejaVuSans'
 else:
-    # Если шрифта нет, используем Helvetica (кириллица не будет отображаться)
     FONT_NAME = 'Helvetica'
 
 
@@ -45,6 +44,163 @@ def format_date(d) -> str:
         return d
     return d.strftime("%d.%m.%Y")
 
+
+# ============================================================
+# ГЕНЕРАЦИЯ PDF ДЛЯ СРОКОВ
+# ============================================================
+
+def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", responsible_person=""):
+    """Генерация PDF для календарного плана с правилами"""
+    try:
+        import io
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # Стили
+        title_style = ParagraphStyle(
+            'TitleStyle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            alignment=1,
+            spaceAfter=20,
+            fontName=FONT_NAME
+        )
+        heading_style = ParagraphStyle(
+            'HeadingStyle',
+            parent=styles['Heading2'],
+            fontSize=13,
+            spaceAfter=8,
+            spaceBefore=12,
+            fontName=FONT_NAME
+        )
+        normal_style = ParagraphStyle(
+            'NormalStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=11
+        )
+        rule_style = ParagraphStyle(
+            'RuleStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=10,
+            leftIndent=20,
+            spaceAfter=4
+        )
+        article_style = ParagraphStyle(
+            'ArticleStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=10,
+            leftIndent=40,
+            textColor=colors.grey,
+            spaceAfter=8
+        )
+
+        # Заголовок
+        story.append(Paragraph("КАЛЕНДАРНЫЙ ПЛАН ЗАКУПКИ", title_style))
+        story.append(Spacer(1, 12))
+
+        # Информация о закупке
+        story.append(Paragraph(f"<b>Закон:</b> {law_type}", normal_style))
+        story.append(Paragraph(f"<b>НМЦК:</b> {nmck:,.2f} руб. ({number_to_words_rubles(nmck)})", normal_style))
+        story.append(Paragraph(f"<b>Дата публикации:</b> {format_date(dates.get('publication_date'))}", normal_style))
+        story.append(Paragraph(f"<b>Дата подписания:</b> {format_date(dates.get('signing_date'))}", normal_style))
+        story.append(Spacer(1, 16))
+
+        # Применены правила
+        story.append(Paragraph("<b>Применены правила:</b>", heading_style))
+        story.append(Spacer(1, 6))
+
+        rules = dates.get('rules', [])
+        if rules:
+            stage_names = {
+                "bid_submission": "📩 Подача заявок",
+                "auction": "⚡ Аукцион",
+                "review": "🔍 Рассмотрение заявок",
+                "protocol": "📋 Протокол",
+                "signing": "✍️ Подписание контракта"
+            }
+            for rule in rules:
+                stage_name = stage_names.get(rule.get('stage'), rule.get('stage'))
+                story.append(Paragraph(f"<b>{stage_name}</b>", heading_style))
+                story.append(Paragraph(f"📌 {rule.get('rule_text', '')}", rule_style))
+                story.append(Paragraph(f"📎 {rule.get('article', '')}", article_style))
+                story.append(Spacer(1, 4))
+        else:
+            story.append(Paragraph("Правила не найдены", normal_style))
+
+        story.append(Spacer(1, 16))
+
+        # Таблица дат
+        story.append(Paragraph("<b>Рассчитанные даты:</b>", heading_style))
+        story.append(Spacer(1, 6))
+
+        table_data = [
+            ["Этап", "Дата", "Кол-во дней"]
+        ]
+        stages = [
+            ("Публикация", dates.get('publication_date'), "—"),
+            ("Окончание подачи", dates.get('bid_end_date'), dates.get('applied_bid_days', '—')),
+            ("Аукцион", dates.get('auction_date', dates.get('bid_end_date')), "—"),
+            ("Рассмотрение", dates.get('review_date', dates.get('consideration_date')), dates.get('applied_review_days', '—')),
+            ("Протокол", dates.get('protocol_date', dates.get('consideration_date')), "—"),
+            ("Подписание", dates.get('signing_date'), dates.get('applied_signing_days', '—'))
+        ]
+        for stage_name, stage_date, days in stages:
+            table_data.append([
+                stage_name,
+                format_date(stage_date),
+                str(days)
+            ])
+
+        table = Table(table_data, colWidths=[3*inch, 2*inch, 1.5*inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
+            ('FONTSIZE', (0, 0), (-1, 0), 11),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('FONTNAME', (0, 1), (-1, -1), FONT_NAME),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        story.append(table)
+
+        # Подпись
+        story.append(Spacer(1, 40))
+        story.append(Paragraph("_________________ / _________________ /", normal_style))
+        story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
+        story.append(Spacer(1, 20))
+        story.append(Paragraph("Документ сгенерирован автоматически в боте «Смета+Срок»", normal_style))
+
+        doc.build(story)
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+        
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            return tmp.name
+    except Exception as e:
+        print(f"❌ Ошибка генерации PDF: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# ============================================================
+# ГЕНЕРАЦИЯ PDF ДЛЯ НМЦК
+# ============================================================
 
 class PDFGenerator:
     def __init__(self):
@@ -69,7 +225,7 @@ class PDFGenerator:
             'TitleStyle',
             parent=styles['Heading1'],
             fontSize=16,
-            alignment=1,  # center
+            alignment=1,
             spaceAfter=20,
             fontName=FONT_NAME
         )
@@ -78,13 +234,6 @@ class PDFGenerator:
             parent=styles['Normal'],
             fontName=FONT_NAME,
             fontSize=11
-        )
-        bold_style = ParagraphStyle(
-            'BoldStyle',
-            parent=normal_style,
-            fontName=FONT_NAME,
-            fontSize=11,
-            alignment=1
         )
         table_header_style = ParagraphStyle(
             'TableHeaderStyle',
@@ -106,7 +255,7 @@ class PDFGenerator:
         table_cell_left_style = ParagraphStyle(
             'TableCellLeftStyle',
             parent=table_cell_style,
-            alignment=0  # left
+            alignment=0
         )
 
         # Заголовок
@@ -130,7 +279,6 @@ class PDFGenerator:
         if not positions:
             story.append(Paragraph("Нет данных для отображения", normal_style))
         else:
-            # Заголовки таблицы
             table_data = [
                 [
                     "№ п/п",
@@ -138,16 +286,14 @@ class PDFGenerator:
                     "ОКПД2/КТРУ",
                     "Кол-во",
                     "Ед. изм.",
-                    "Коммерческое предложение 1",
-                    "Коммерческое предложение 2",
-                    "Коммерческое предложение 3",
+                    "КП1",
+                    "КП2",
+                    "КП3",
                     "Средняя цена за ед. (руб.)",
                     "Коэф. вариации (%)",
                     "Итого (руб.)"
                 ]
             ]
-            # Добавляем подзаголовки для КП (цена за ед. и итоговая цена – мы показываем только цену за единицу)
-            # Для соответствия образцу можно добавить две строки, но упростим, показывая только цену за ед.
 
             for i, pos in enumerate(positions, 1):
                 row = [
@@ -169,7 +315,6 @@ class PDFGenerator:
             total_nmck = data.get('total_nmck', 0)
             table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
 
-            # Ширина колонок
             col_widths = [
                 0.6*cm,   # №
                 4.0*cm,   # Наименование
@@ -197,7 +342,7 @@ class PDFGenerator:
                 ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
                 ('FONTSIZE', (0, -1), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ('ALIGN', (1, 1), (1, -2), 'LEFT'),  # Наименование выравниваем влево
+                ('ALIGN', (1, 1), (1, -2), 'LEFT'),
             ]))
             story.append(table)
 
@@ -219,7 +364,6 @@ class PDFGenerator:
                 "i – номер источника ценовой информации;\n"
                 "Цi – цена единицы товара."
             )
-        # Заменяем переносы строк на <br/> для Paragraph
         note_text = note_text.replace('\n', '<br/>')
         story.append(Paragraph(note_text, normal_style))
 
@@ -238,12 +382,15 @@ class PDFGenerator:
         story.append(Paragraph("_________________ / _________________ /", normal_style))
         story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
 
-        # Сборка PDF
         doc.build(story)
         pdf_bytes = buffer.getvalue()
         buffer.close()
         return pdf_bytes
 
+
+# ============================================================
+# ПОДГОТОВКА ДАННЫХ ДЛЯ PDF
+# ============================================================
 
 def prepare_pdf_data(
     procurement: Dict[str, Any],
@@ -292,42 +439,3 @@ def prepare_pdf_data(
         "method": method,
         "timeline": timeline or []
     }
-
-
-def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", responsible_person=""):
-    """Генерация PDF для календарного плана (упрощённая версия)"""
-    try:
-        import io
-        from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib import colors
-
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
-        styles = getSampleStyleSheet()
-        story = []
-
-        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20, fontName=FONT_NAME)
-        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=12)
-
-        story.append(Paragraph("Календарный план закупки", title_style))
-        story.append(Spacer(1, 12))
-
-        story.append(Paragraph(f"<b>Закон:</b> {law_type}", normal_style))
-        story.append(Paragraph(f"<b>НМЦК:</b> {nmck:,.2f} руб.", normal_style))
-        story.append(Paragraph(f"<b>Публикация:</b> {format_date(dates.get('publication_date'))}", normal_style))
-        story.append(Paragraph(f"<b>Подписание:</b> {format_date(dates.get('signing_date'))}", normal_style))
-        story.append(Spacer(1, 20))
-        story.append(Paragraph("Документ сгенерирован автоматически", normal_style))
-
-        doc.build(story)
-        pdf_bytes = buffer.getvalue()
-        buffer.close()
-        
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-            tmp.write(pdf_bytes)
-            return tmp.name
-    except Exception as e:
-        print(f"❌ Ошибка генерации PDF: {e}")
-        return None
