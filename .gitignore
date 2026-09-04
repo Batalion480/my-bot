@@ -1,21 +1,54 @@
 # Файлы с секретами
 .env
+.env.local
+.env.*.local
 
 # Кеш Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.so
+*.dylib
 
 # Системные файлы
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Логи
 *.log
+logs/
 
 # Папка с данными
 data/
+*.db
+*.sqlite
+*.sqlite3
 
 # Файлы IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# Временные файлы
+temp/
+tmp/
+*.tmp
+
+# Файлы сборки
+dist/
+build/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Файлы отчетов (если не хотите хранить сгенерированные PDF)
+*.pdf
+!templates/
+
+# Папка с загруженными файлами (если есть)
+uploads/
+downloads/.env 

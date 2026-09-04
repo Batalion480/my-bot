@@ -5,7 +5,6 @@ import json
 from datetime import datetime, date
 from typing import List, Dict, Any
 import pandas as pd
-# import cv2  # закомментировано для сервера (требует системных библиотек)
 import numpy as np
 import pytesseract
 
@@ -349,67 +348,22 @@ async def process_quantity_continue(message: Message, state: FSMContext):
 
 
 # ============================================================
-# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ) - ОТКЛЮЧЕНА НА СЕРВЕРЕ
+# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ) - ОТКЛЮЧЕНА
 # ============================================================
 
 @router.callback_query(lambda c: c.data == "input_photo")
 async def input_photo(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.edit_text(
-        "⚠️ **Функция распознавания фото временно отключена на сервере.**\n\n"
+        "⚠️ **Функция распознавания фото временно недоступна на сервере.**\n\n"
         "Пожалуйста, используйте:\n"
         "• 📝 Ручной ввод\n"
         "• 📂 Загрузку Excel-файла\n\n"
-        "Извините за неудобства!"
+        "Извините за неудобства! 🙏"
     )
 
 
-# Функция handle_photo полностью закомментирована для сервера
-"""
-@router.message(NMCKStates.waiting_for_photo, F.photo)
-async def handle_photo(message: Message, state: FSMContext):
-    # Эта функция требует OpenCV и системных библиотек
-    # На сервере Amvera вызывает ошибку libGL.so.1
-    await message.answer("⚠️ Функция распознавания фото временно отключена.")
-"""
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_yes")
-async def photo_confirm_yes(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.edit_text(
-        "⚠️ Функция распознавания фото временно отключена.\n"
-        "Используйте ручной ввод или Excel-файл."
-    )
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_next")
-async def photo_confirm_next(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.edit_text(
-        "⚠️ Функция распознавания фото временно отключена."
-    )
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_edit")
-async def photo_confirm_edit(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.edit_text(
-        "✏️ Введите данные вручную в формате:\n\n"
-        "Наименование: Бумага офисная\n"
-        "Ед.изм.: шт.\n"
-        "Количество: 100\n"
-        "Цена за ед.: 150"
-    )
-
-
-@router.callback_query(lambda c: c.data == "photo_confirm_retry")
-async def photo_confirm_retry(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.edit_text(
-        "⚠️ Функция распознавания фото временно отключена."
-    )
-
+# Функция handle_photo полностью удалена для сервера
 
 # ============================================================
 # ЗАГРУЗКА EXCEL (МНОГО ПОЗИЦИЙ)
