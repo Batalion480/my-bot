@@ -561,19 +561,47 @@ async def create_pdf(callback: CallbackQuery, state: FSMContext):
         while len(suppliers) < 3:
             suppliers.append({"name": f"Поставщик {len(suppliers)+1}", "price": 0, "note": "—"})
         
-        pdf_data = prepare_pdf_data(
-            procurement={
-                "title": data.get("item_name", "Закупка (многопозиционная)"),
-                "law_type": f"{data.get('law_type', '44')}-ФЗ",
-                "nmck": data.get("nmck_total", 0),
-                "nmck_method": method_text,
-                "nmck_source": "ч. 6 ст. 22 44-ФЗ" if method == "average" else "письмо Минфина от 08.09.2017 № 24-01-09/58179",
-            },
-            suppliers=suppliers,
-            timeline=[],
-            company_name="ООО «Ваша компания»",
-            responsible_person="Иванов И.И."
-        )
+       # Подготавливаем позиции для PDF
+positions_for_pdf = data.get("positions", [])
+if not positions_for_pdf:
+    # Если позиций нет (одиночная позиция), создаём из данных
+    prices = [
+        data.get("price_1", 0),
+        data.get("price_2", 0),
+        data.get("price_3", 0)
+    ]
+    avg_price = sum(prices) / 3 if prices else 0
+    variation = 0
+    # Вычисляем вариацию, если есть
+    if avg_price > 0 and len(prices) >= 3:
+        variance = sum((p - avg_price) ** 2 for p in prices) / 3
+        std_dev = variance ** 0.5
+        variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
+    positions_for_pdf = [{
+        "name": data.get("item_name", "Закупка"),
+        "okpd": data.get("okpd", ""),
+        "quantity": data.get("quantity", 1),
+        "unit": "шт.",
+        "prices": prices,
+        "avg_price": avg_price,
+        "variation": variation,
+        "total_price": data.get("nmck_total", 0)
+    }]
+
+pdf_data = prepare_pdf_data(
+    procurement={
+        "title": data.get("item_name", "Закупка"),
+        "law_type": f"{data.get('law_type', '44')}-ФЗ",
+        "nmck": data.get("nmck_total", 0),
+        "nmck_method": method_text,
+        "nmck_source": "ч. 6 ст. 22 44-ФЗ" if method == "average" else "письмо Минфина от 08.09.2017 № 24-01-09/58179",
+    },
+    suppliers=suppliers,
+    timeline=[],
+    company_name="ООО «Ваша компания»",
+    responsible_person="Иванов И.И.",
+    positions=positions_for_pdf  # ← ВАЖНО: передаём позиции!
+)
     else:
         suppliers = [
             {"name": "Поставщик 1", "price": data.get("price_1", 0)},
