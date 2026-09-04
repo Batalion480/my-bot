@@ -5,6 +5,7 @@ import json
 from datetime import datetime, date
 from typing import List, Dict, Any
 import pandas as pd
+# import cv2  # закомментировано для сервера
 import numpy as np
 import pytesseract
 
@@ -20,6 +21,7 @@ from utils.pdf_generator import PDFGenerator, prepare_pdf_data
 
 router = Router()
 db = Database()
+
 
 # ============================================================
 # FSM СОСТОЯНИЯ
@@ -77,7 +79,7 @@ def extract_price(text: str) -> float:
 
 
 def extract_quantity(text: str) -> float:
-    """Извлекает количество (обычно число перед единицей измерения)"""
+    """Извлекает количество"""
     patterns = [
         r'(\d+)\s*(шт|кг|л|м|усл\.?\s*ед\.?|упак|пачка|коробка)',
         r'(\d+)\s*(ед|шт|кг|л|м)',
@@ -118,7 +120,6 @@ def extract_unit(text: str) -> str:
 async def select_law(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     law_type = callback.data.replace("law_", "")
-    
     await state.update_data(law_type=law_type)
     await state.set_state(NMCKStates.waiting_for_position_count)
     
@@ -161,7 +162,6 @@ async def select_calculation_method(callback: CallbackQuery, state: FSMContext):
     await state.update_data(calculation_method=method)
     
     method_text = "средней цене" if method == "average" else "минимальной цене (по письму Минфина)"
-    
     data = await state.get_data()
     count = data.get("position_count")
     
@@ -257,19 +257,48 @@ async def process_price_3(message: Message, state: FSMContext):
     result = NMCKCalculator.calculate_nmck(prices=prices, method=method)
     await state.update_data(nmck_result=result, nmck=result["nmck"])
     
-    text = format_nmck_result(result)
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Продолжить", callback_data="nmck_continue")
-    builder.button(text="🔄 Ввести заново", callback_data="nmck_retry")
-    builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
-    builder.adjust(1)
-    
-    await state.set_state(NMCKStates.waiting_for_quantity)
+    # Переходим к сбору реквизитов
+    await state.set_state(NMCKStates.waiting_for_item_name)
     await message.answer(
-        text + "\n\n📦 Введите **количество** (условная единица):",
-        reply_markup=builder.as_markup()
+        "📝 Введите **наименование позиции**:"
     )
+
+
+@router.message(NMCKStates.waiting_for_item_name)
+async def process_item_name(message: Message, state: FSMContext):
+    item_name = message.text.strip()
+    if len(item_name) < 3:
+        await message.answer("⚠️ Название должно быть длиннее 3 символов. Попробуйте ещё раз.")
+        return
+    await state.update_data(item_name=item_name)
+    await state.set_state(NMCKStates.waiting_for_okpd)
+    await message.answer("📝 Введите **ОКПД2/КТРУ** (или '-' если нет):")
+
+
+@router.message(NMCKStates.waiting_for_okpd)
+async def process_okpd(message: Message, state: FSMContext):
+    okpd = message.text.strip()
+    await state.update_data(okpd=okpd)
+    await state.set_state(NMCKStates.waiting_for_incoming_number)
+    await message.answer("📝 Введите **входящий номер КП**:")
+
+
+@router.message(NMCKStates.waiting_for_incoming_number)
+async def process_incoming_number(message: Message, state: FSMContext):
+    incoming_number = message.text.strip()
+    await state.update_data(incoming_number=incoming_number)
+    await state.set_state(NMCKStates.waiting_for_incoming_date)
+    await message.answer("📝 Введите **дату КП** (в формате ДД.ММ.ГГГГ):")
+
+
+@router.message(NMCKStates.waiting_for_incoming_date)
+async def process_incoming_date(message: Message, state: FSMContext):
+    incoming_date = message.text.strip()
+    await state.update_data(incoming_date=incoming_date)
+    
+    # После ввода даты запрашиваем количество
+    await state.set_state(NMCKStates.waiting_for_quantity)
+    await message.answer("📦 Введите **количество** (условная единица):")
 
 
 @router.message(NMCKStates.waiting_for_quantity)
@@ -310,60 +339,21 @@ async def process_quantity(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=builder.as_markup())
 
 
-@router.callback_query(lambda c: c.data == "nmck_continue")
-async def nmck_continue(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.delete()
-    await process_quantity_continue(callback.message, state)
-
-
-async def process_quantity_continue(message: Message, state: FSMContext):
-    data = await state.get_data()
-    quantity = data.get("quantity", 1)
-    result = data.get("nmck_result")
-    nmck_total = result["nmck"] * quantity
-    await state.update_data(nmck_total=nmck_total)
-    
-    method = data.get("calculation_method", "average")
-    method_text = "средней цене" if method == "average" else "минимальной цене"
-    
-    text = (
-        f"📊 **Итоговый расчет:**\n\n"
-        f"📊 Метод: {method_text}\n"
-        f"💰 Цена за единицу: {result['nmck']:,.2f} руб.\n"
-        f"📦 Количество: {quantity:,.0f} шт.\n"
-        f"💵 **НМЦК контракта: {nmck_total:,.2f} руб.**\n\n"
-        f"📊 Коэффициент вариации: {result['variation_coefficient'] * 100:.1f}%\n"
-        f"{result.get('scatter_warning', '')}"
-    )
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📄 Сформировать PDF", callback_data="pdf_create")
-    builder.button(text="📅 Сроки", callback_data="go_to_terms")
-    builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
-    builder.adjust(1)
-    
-    await state.set_state(NMCKStates.waiting_for_final_action)
-    await message.answer(text, reply_markup=builder.as_markup())
-
-
 # ============================================================
-# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ) - ОТКЛЮЧЕНА
+# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ) - ОТКЛЮЧЕНА НА СЕРВЕРЕ
 # ============================================================
 
 @router.callback_query(lambda c: c.data == "input_photo")
 async def input_photo(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.edit_text(
-        "⚠️ **Функция распознавания фото временно недоступна на сервере.**\n\n"
+        "⚠️ **Функция распознавания фото временно отключена на сервере.**\n\n"
         "Пожалуйста, используйте:\n"
         "• 📝 Ручной ввод\n"
         "• 📂 Загрузку Excel-файла\n\n"
-        "Извините за неудобства! 🙏"
+        "Извините за неудобства!"
     )
 
-
-# Функция handle_photo полностью удалена для сервера
 
 # ============================================================
 # ЗАГРУЗКА EXCEL (МНОГО ПОЗИЦИЙ)
@@ -466,7 +456,7 @@ async def handle_excel(message: Message, state: FSMContext):
             await message.answer("❌ Не найдено данных для расчёта. Проверьте заполнение файла.")
             return
         
-        await state.update_data(excel_positions=positions)
+        await state.update_data(positions=positions)
         await calculate_multi_position_nmck(message, state, positions=positions)
         
     except Exception as e:
@@ -512,21 +502,6 @@ async def calculate_multi_position_nmck(message: types.Message, state: FSMContex
             avg_price = pos.get('price', result['nmck'])
         total_nmck += avg_price * qty
     
-    text = (
-        f"📊 **Результат расчёта по {len(positions)} позициям:**\n\n"
-        f"📊 Метод: {method_text}\n"
-        f"📈 Средняя цена за единицу: **{result['nmck']:,.2f} руб.**\n"
-        f"📊 Коэффициент вариации: {result['variation_coefficient'] * 100:.1f}%\n"
-        f"{result.get('scatter_warning', '')}\n\n"
-        f"💵 **Общая НМЦК контракта: {total_nmck:,.2f} руб.**\n"
-    )
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📄 Сформировать PDF", callback_data="pdf_create_multi")
-    builder.button(text="📅 Сроки", callback_data="go_to_terms")
-    builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
-    builder.adjust(1)
-    
     await state.update_data(
         nmck_result=result, 
         nmck=result['nmck'], 
@@ -534,8 +509,12 @@ async def calculate_multi_position_nmck(message: types.Message, state: FSMContex
         positions=positions,
         calculation_method=method
     )
-    await state.set_state(NMCKStates.waiting_for_final_action)
-    await message.answer(text, reply_markup=builder.as_markup())
+    
+    # Переходим к сбору реквизитов (для много позиций)
+    await state.set_state(NMCKStates.waiting_for_item_name)
+    await message.answer(
+        "📝 Введите **наименование позиции** (или 'все' для общей позиции):"
+    )
 
 
 # ============================================================
@@ -549,78 +528,58 @@ async def create_pdf(callback: CallbackQuery, state: FSMContext):
     method = data.get("calculation_method", "average")
     method_text = "Средняя арифметическая" if method == "average" else "Минимальная цена (письмо Минфина)"
     
+    # Получаем позиции
     positions = data.get("positions", [])
-    if positions:
-        suppliers = []
-        for i, pos in enumerate(positions):
-            suppliers.append({
-                "name": f"Поставщик {i+1}",
-                "price": pos.get('price', 0),
-                "note": pos.get('name', '')
-            })
-        while len(suppliers) < 3:
-            suppliers.append({"name": f"Поставщик {len(suppliers)+1}", "price": 0, "note": "—"})
-        
-       # Подготавливаем позиции для PDF
-positions_for_pdf = data.get("positions", [])
-if not positions_for_pdf:
-    # Если позиций нет (одиночная позиция), создаём из данных
-    prices = [
-        data.get("price_1", 0),
-        data.get("price_2", 0),
-        data.get("price_3", 0)
-    ]
-    avg_price = sum(prices) / 3 if prices else 0
-    variation = 0
-    # Вычисляем вариацию, если есть
-    if avg_price > 0 and len(prices) >= 3:
-        variance = sum((p - avg_price) ** 2 for p in prices) / 3
-        std_dev = variance ** 0.5
-        variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
-    positions_for_pdf = [{
-        "name": data.get("item_name", "Закупка"),
-        "okpd": data.get("okpd", ""),
-        "quantity": data.get("quantity", 1),
-        "unit": "шт.",
-        "prices": prices,
-        "avg_price": avg_price,
-        "variation": variation,
-        "total_price": data.get("nmck_total", 0)
-    }]
-
-pdf_data = prepare_pdf_data(
-    procurement={
-        "title": data.get("item_name", "Закупка"),
-        "law_type": f"{data.get('law_type', '44')}-ФЗ",
-        "nmck": data.get("nmck_total", 0),
-        "nmck_method": method_text,
-        "nmck_source": "ч. 6 ст. 22 44-ФЗ" if method == "average" else "письмо Минфина от 08.09.2017 № 24-01-09/58179",
-    },
-    suppliers=suppliers,
-    timeline=[],
-    company_name="ООО «Ваша компания»",
-    responsible_person="Иванов И.И.",
-    positions=positions_for_pdf  # ← ВАЖНО: передаём позиции!
-)
-    else:
-        suppliers = [
-            {"name": "Поставщик 1", "price": data.get("price_1", 0)},
-            {"name": "Поставщик 2", "price": data.get("price_2", 0)},
-            {"name": "Поставщик 3", "price": data.get("price_3", 0)},
+    if not positions:
+        # Если позиций нет (одиночная позиция), создаём из данных
+        prices = [
+            data.get("price_1", 0),
+            data.get("price_2", 0),
+            data.get("price_3", 0)
         ]
-        pdf_data = prepare_pdf_data(
-            procurement={
-                "title": data.get("item_name", "Закупка"),
-                "law_type": f"{data.get('law_type', '44')}-ФЗ",
-                "nmck": data.get("nmck_total") or data.get("nmck", 0),
-                "nmck_method": method_text,
-                "nmck_source": "ч. 6 ст. 22 44-ФЗ" if method == "average" else "письмо Минфина от 08.09.2017 № 24-01-09/58179",
-            },
-            suppliers=suppliers,
-            timeline=[],
-            company_name="ООО «Ваша компания»",
-            responsible_person="Иванов И.И."
-        )
+        avg_price = sum(prices) / 3 if prices else 0
+        variation = 0
+        if avg_price > 0 and len(prices) >= 3:
+            variance = sum((p - avg_price) ** 2 for p in prices) / 3
+            std_dev = variance ** 0.5
+            variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
+        positions = [{
+            "name": data.get("item_name", "Закупка"),
+            "okpd": data.get("okpd", ""),
+            "quantity": data.get("quantity", 1),
+            "unit": "шт.",
+            "prices": prices,
+            "avg_price": avg_price,
+            "variation": variation,
+            "total_price": data.get("nmck_total", 0)
+        }]
+    
+    # Подготавливаем данные для PDF
+    suppliers = []
+    for i, pos in enumerate(positions, 1):
+        suppliers.append({
+            "name": f"Поставщик {i}",
+            "price": pos.get("prices", [0])[0] if pos.get("prices") else 0,
+            "note": pos.get("name", "")
+        })
+    while len(suppliers) < 3:
+        suppliers.append({"name": f"Поставщик {len(suppliers)+1}", "price": 0, "note": "—"})
+    
+    pdf_data = prepare_pdf_data(
+        procurement={
+            "title": data.get("item_name", "Закупка"),
+            "law_type": f"{data.get('law_type', '44')}-ФЗ",
+            "nmck": data.get("nmck_total", 0),
+            "nmck_method": method_text,
+            "nmck_source": "ч. 6 ст. 22 44-ФЗ" if method == "average" else "письмо Минфина от 08.09.2017 № 24-01-09/58179",
+        },
+        suppliers=suppliers,
+        timeline=[],
+        company_name="ООО «Ваша компания»",
+        responsible_person="Иванов И.И.",
+        positions=positions,
+        method=method
+    )
     
     pdf_gen = PDFGenerator()
     pdf_bytes = pdf_gen.generate(pdf_data)
