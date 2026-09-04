@@ -18,23 +18,95 @@ async def cmd_start(message: types.Message):
     )
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔵 44-ФЗ", callback_data="law_44")
-    builder.button(text="🟢 223-ФЗ", callback_data="law_223")
+    builder.button(text="🔵 44-ФЗ", callback_data="menu_44")
+    builder.button(text="🟢 223-ФЗ", callback_data="menu_223")
     builder.adjust(1)
 
     await message.answer(
-        "🏢 Добро пожаловать в бот **«Смета+Срок»**!\n\n"
+        "🏢 **Добро пожаловать в бот «Смета+Срок»!**\n\n"
         "Я помогу вам:\n"
         "• Рассчитать НМЦК методом сопоставимых рыночных цен\n"
         "• Построить календарный план по 44-ФЗ или 223-ФЗ\n"
         "• Сформировать готовый PDF-документ\n\n"
-        "Выберите закон:",
+        "📌 **Выберите закон:**",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(lambda c: c.data == "menu_44")
+async def menu_44(callback: types.CallbackQuery):
+    """Меню 44-ФЗ"""
+    await callback.answer()
+    await callback.message.delete()
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📊 Расчёт НМЦК", callback_data="nmck_start")
+    builder.button(text="📅 Расчёт сроков", callback_data="go_to_terms")
+    builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
+    builder.adjust(1)
+
+    await callback.message.answer(
+        "🔵 **44-ФЗ**\n\n"
+        "Выберите действие:",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(lambda c: c.data == "menu_223")
+async def menu_223(callback: types.CallbackQuery):
+    """Меню 223-ФЗ"""
+    await callback.answer()
+    await callback.message.delete()
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📊 Расчёт НМЦК", callback_data="nmck_start")
+    builder.button(text="📅 Расчёт сроков", callback_data="go_to_terms")
+    builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
+    builder.adjust(1)
+
+    await callback.message.answer(
+        "🟢 **223-ФЗ**\n\n"
+        "Выберите действие:",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(lambda c: c.data == "nmck_start")
+async def nmck_start(callback: types.CallbackQuery, state: FSMContext):
+    """Начало расчёта НМЦК"""
+    await callback.answer()
+    
+    # Сохраняем закон (44 или 223) из предыдущего меню
+    # Если нет — по умолчанию 44
+    data = await state.get_data()
+    if not data.get("law_type"):
+        # Определяем закон из текста сообщения
+        if "44-ФЗ" in callback.message.text:
+            await state.update_data(law_type="44")
+        elif "223-ФЗ" in callback.message.text:
+            await state.update_data(law_type="223")
+        else:
+            await state.update_data(law_type="44")
+    
+    await state.set_state(NMCKStates.waiting_for_position_count)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="1 позиция", callback_data="pos_1")
+    builder.button(text="Много позиций", callback_data="pos_many")
+    builder.button(text="🔙 Назад", callback_data="menu_44" if await state.get_data() and data.get("law_type") == "44" else "menu_223")
+    builder.adjust(2, 1)
+    
+    await callback.message.edit_text(
+        "📊 **Расчёт НМЦК**\n\n"
+        "Сколько позиций в коммерческом предложении?",
         reply_markup=builder.as_markup()
     )
 
 
 @router.callback_query(lambda c: c.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
+async def back_to_menu(callback: types.CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
     await callback.answer()
+    await state.clear()
+    await callback.message.delete()
     await cmd_start(callback.message)
