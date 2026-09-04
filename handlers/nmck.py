@@ -1,5 +1,5 @@
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext  # ← ДОБАВЛЕНО!
+from aiogram.fsm.context import FSMContext
 import os
 import re
 import json
@@ -37,11 +37,16 @@ class NMCKStates(StatesGroup):
     waiting_for_price_2 = State()
     waiting_for_price_3 = State()
     waiting_for_quantity = State()
+    
+    # Реквизиты для PDF
     waiting_for_item_name = State()
     waiting_for_okpd = State()
-    waiting_for_incoming_number = State()
-    waiting_for_incoming_date = State()
-    waiting_for_minfin_letter = State()
+    waiting_for_kp1_number = State()
+    waiting_for_kp1_date = State()
+    waiting_for_kp2_number = State()
+    waiting_for_kp2_date = State()
+    waiting_for_kp3_number = State()
+    waiting_for_kp3_date = State()
     
     # Много позиций - фото
     waiting_for_photo = State()
@@ -61,7 +66,6 @@ class NMCKStates(StatesGroup):
 # ============================================================
 
 def extract_price(text: str) -> float:
-    """Извлекает цену из текста (число с запятой или точкой)"""
     patterns = [
         r'(\d{1,3}(?:[ \t]*\d{3})*[.,]\d{2})',
         r'(\d{1,3}(?:[ \t]*\d{3})*)',
@@ -79,7 +83,6 @@ def extract_price(text: str) -> float:
 
 
 def extract_quantity(text: str) -> float:
-    """Извлекает количество"""
     patterns = [
         r'(\d+)\s*(шт|кг|л|м|усл\.?\s*ед\.?|упак|пачка|коробка)',
         r'(\d+)\s*(ед|шт|кг|л|м)',
@@ -93,7 +96,6 @@ def extract_quantity(text: str) -> float:
 
 
 def extract_item_name(text: str) -> str:
-    """Извлекает название товара/услуги"""
     lines = text.split('\n')
     for line in lines[:15]:
         line = line.strip()
@@ -104,7 +106,6 @@ def extract_item_name(text: str) -> str:
 
 
 def extract_unit(text: str) -> str:
-    """Извлекает единицу измерения"""
     units = ['шт', 'кг', 'л', 'м', 'усл. ед.', 'упак', 'пачка', 'коробка', 'ед.']
     for unit in units:
         if unit in text.lower():
@@ -249,54 +250,7 @@ async def process_price_3(message: Message, state: FSMContext):
         return
     
     await state.update_data(price_3=price)
-    
-    data = await state.get_data()
-    prices = [data["price_1"], data["price_2"], data["price_3"]]
-    method = data.get("calculation_method", "average")
-    
-    result = NMCKCalculator.calculate_nmck(prices=prices, method=method)
-    await state.update_data(nmck_result=result, nmck=result["nmck"])
-    
-    # Переходим к сбору реквизитов
-    await state.set_state(NMCKStates.waiting_for_item_name)
-    await message.answer(
-        "📝 Введите **наименование позиции**:"
-    )
-
-
-@router.message(NMCKStates.waiting_for_item_name)
-async def process_item_name(message: Message, state: FSMContext):
-    item_name = message.text.strip()
-    if len(item_name) < 3:
-        await message.answer("⚠️ Название должно быть длиннее 3 символов. Попробуйте ещё раз.")
-        return
-    await state.update_data(item_name=item_name)
-    await state.set_state(NMCKStates.waiting_for_okpd)
-    await message.answer("📝 Введите **ОКПД2/КТРУ** (или '-' если нет):")
-
-
-@router.message(NMCKStates.waiting_for_okpd)
-async def process_okpd(message: Message, state: FSMContext):
-    okpd = message.text.strip()
-    await state.update_data(okpd=okpd)
-    await state.set_state(NMCKStates.waiting_for_incoming_number)
-    await message.answer("📝 Введите **входящий номер КП**:")
-
-
-@router.message(NMCKStates.waiting_for_incoming_number)
-async def process_incoming_number(message: Message, state: FSMContext):
-    incoming_number = message.text.strip()
-    await state.update_data(incoming_number=incoming_number)
-    await state.set_state(NMCKStates.waiting_for_incoming_date)
-    await message.answer("📝 Введите **дату КП** (в формате ДД.ММ.ГГГГ):")
-
-
-@router.message(NMCKStates.waiting_for_incoming_date)
-async def process_incoming_date(message: Message, state: FSMContext):
-    incoming_date = message.text.strip()
-    await state.update_data(incoming_date=incoming_date)
-    
-    # После ввода даты запрашиваем количество
+    # Переходим к запросу количества
     await state.set_state(NMCKStates.waiting_for_quantity)
     await message.answer("📦 Введите **количество** (условная единица):")
 
@@ -312,11 +266,19 @@ async def process_quantity(message: Message, state: FSMContext):
         return
     
     data = await state.get_data()
-    result = data.get("nmck_result")
-    nmck_total = result["nmck"] * quantity
-    await state.update_data(quantity=quantity, nmck_total=nmck_total)
-    
+    prices = [data["price_1"], data["price_2"], data["price_3"]]
     method = data.get("calculation_method", "average")
+    
+    result = NMCKCalculator.calculate_nmck(prices=prices, method=method)
+    nmck_total = result["nmck"] * quantity
+    await state.update_data(
+        nmck_result=result,
+        nmck=result["nmck"],
+        quantity=quantity,
+        nmck_total=nmck_total,
+        prices=prices
+    )
+    
     method_text = "средней цене" if method == "average" else "минимальной цене"
     
     text = (
@@ -340,7 +302,175 @@ async def process_quantity(message: Message, state: FSMContext):
 
 
 # ============================================================
-# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ) - ОТКЛЮЧЕНА НА СЕРВЕРЕ
+# СБОР РЕКВИЗИТОВ ДЛЯ PDF (1 ПОЗИЦИЯ)
+# ============================================================
+
+@router.callback_query(lambda c: c.data == "pdf_create")
+async def start_pdf_collection(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(NMCKStates.waiting_for_item_name)
+    await callback.message.edit_text(
+        "📝 Для формирования PDF введите **наименование позиции**:"
+    )
+
+
+@router.message(NMCKStates.waiting_for_item_name)
+async def process_item_name(message: Message, state: FSMContext):
+    item_name = message.text.strip()
+    if len(item_name) < 3:
+        await message.answer("⚠️ Название должно быть длиннее 3 символов. Попробуйте ещё раз.")
+        return
+    await state.update_data(item_name=item_name)
+    await state.set_state(NMCKStates.waiting_for_okpd)
+    await message.answer("📝 Введите **ОКПД2/КТРУ** (или '-' если нет):")
+
+
+@router.message(NMCKStates.waiting_for_okpd)
+async def process_okpd(message: Message, state: FSMContext):
+    okpd = message.text.strip()
+    await state.update_data(okpd=okpd)
+    await state.set_state(NMCKStates.waiting_for_kp1_number)
+    await message.answer("📝 Введите **входящий номер КП1**: (например, 9)")
+
+
+@router.message(NMCKStates.waiting_for_kp1_number)
+async def process_kp1_number(message: Message, state: FSMContext):
+    await state.update_data(kp1_number=message.text.strip())
+    await state.set_state(NMCKStates.waiting_for_kp1_date)
+    await message.answer("📝 Введите **дату КП1** (в формате ДД.ММ.ГГГГ):")
+
+
+@router.message(NMCKStates.waiting_for_kp1_date)
+async def process_kp1_date(message: Message, state: FSMContext):
+    await state.update_data(kp1_date=message.text.strip())
+    await state.set_state(NMCKStates.waiting_for_kp2_number)
+    await message.answer("📝 Введите **входящий номер КП2**: (например, 10)")
+
+
+@router.message(NMCKStates.waiting_for_kp2_number)
+async def process_kp2_number(message: Message, state: FSMContext):
+    await state.update_data(kp2_number=message.text.strip())
+    await state.set_state(NMCKStates.waiting_for_kp2_date)
+    await message.answer("📝 Введите **дату КП2** (в формате ДД.ММ.ГГГГ):")
+
+
+@router.message(NMCKStates.waiting_for_kp2_date)
+async def process_kp2_date(message: Message, state: FSMContext):
+    await state.update_data(kp2_date=message.text.strip())
+    await state.set_state(NMCKStates.waiting_for_kp3_number)
+    await message.answer("📝 Введите **входящий номер КП3**: (например, 11)")
+
+
+@router.message(NMCKStates.waiting_for_kp3_number)
+async def process_kp3_number(message: Message, state: FSMContext):
+    await state.update_data(kp3_number=message.text.strip())
+    await state.set_state(NMCKStates.waiting_for_kp3_date)
+    await message.answer("📝 Введите **дату КП3** (в формате ДД.ММ.ГГГГ):")
+
+
+@router.message(NMCKStates.waiting_for_kp3_date)
+async def process_kp3_date(message: Message, state: FSMContext):
+    await state.update_data(kp3_date=message.text.strip())
+    # Все данные собраны — генерируем PDF
+    await generate_final_pdf(message, state)
+
+
+# ============================================================
+# ФИНАЛЬНАЯ ГЕНЕРАЦИЯ PDF
+# ============================================================
+
+async def generate_final_pdf(message: Message, state: FSMContext):
+    data = await state.get_data()
+    
+    method = data.get("calculation_method", "average")
+    method_text = "Средняя арифметическая" if method == "average" else "Минимальная цена (письмо Минфина)"
+    
+    prices = [
+        data.get("price_1", 0),
+        data.get("price_2", 0),
+        data.get("price_3", 0)
+    ]
+    kp_numbers = [
+        data.get("kp1_number", ""),
+        data.get("kp2_number", ""),
+        data.get("kp3_number", "")
+    ]
+    kp_dates = [
+        data.get("kp1_date", ""),
+        data.get("kp2_date", ""),
+        data.get("kp3_date", "")
+    ]
+    
+    avg_price = sum(prices) / 3 if prices else 0
+    variation = 0
+    if avg_price > 0 and len(prices) >= 3:
+        variance = sum((p - avg_price) ** 2 for p in prices) / 3
+        std_dev = variance ** 0.5
+        variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
+    
+    # Формируем позицию с реквизитами
+    positions = [{
+        "name": data.get("item_name", "Закупка"),
+        "okpd": data.get("okpd", ""),
+        "quantity": data.get("quantity", 1),
+        "unit": "шт.",
+        "prices": prices,
+        "kp_numbers": kp_numbers,
+        "kp_dates": kp_dates,
+        "avg_price": avg_price,
+        "variation": variation,
+        "total_price": data.get("nmck_total", 0)
+    }]
+    
+    # Подготавливаем данные для PDF
+    suppliers = []
+    for i in range(3):
+        suppliers.append({
+            "name": f"Поставщик {i+1}",
+            "price": prices[i] if i < len(prices) else 0,
+            "note": f"КП {i+1}"
+        })
+    
+    pdf_data = prepare_pdf_data(
+        procurement={
+            "title": data.get("item_name", "Закупка"),
+            "law_type": f"{data.get('law_type', '44')}-ФЗ",
+            "nmck": data.get("nmck_total", 0),
+            "nmck_method": method_text,
+            "nmck_source": "ч. 6 ст. 22 44-ФЗ" if method == "average" else "письмо Минфина от 08.09.2017 № 24-01-09/58179",
+        },
+        suppliers=suppliers,
+        timeline=[],
+        company_name="ООО «Ваша компания»",
+        responsible_person="Иванов И.И.",
+        positions=positions,
+        method=method
+    )
+    
+    pdf_gen = PDFGenerator()
+    pdf_bytes = pdf_gen.generate(pdf_data)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Сроки", callback_data="go_to_terms")
+    builder.button(text="🆕 Новая закупка", callback_data="new_procurement")
+    builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
+    builder.adjust(1)
+    
+    await message.answer_document(
+        BufferedInputFile(pdf_bytes, filename=f"НМЦК_{datetime.now().strftime('%Y%m%d')}.pdf"),
+        caption=f"📄 **Обоснование начальной (максимальной) цены контракта**\n\n"
+                f"📊 Метод: {method_text}"
+    )
+    
+    await state.clear()
+    await message.answer(
+        "Что делаем дальше?",
+        reply_markup=builder.as_markup()
+    )
+
+
+# ============================================================
+# ЗАГРУЗКА ФОТО/СКАНА (МНОГО ПОЗИЦИЙ) - ОТКЛЮЧЕНА
 # ============================================================
 
 @router.callback_query(lambda c: c.data == "input_photo")
@@ -514,92 +644,6 @@ async def calculate_multi_position_nmck(message: types.Message, state: FSMContex
     await state.set_state(NMCKStates.waiting_for_item_name)
     await message.answer(
         "📝 Введите **наименование позиции** (или 'все' для общей позиции):"
-    )
-
-
-# ============================================================
-# ОБЩАЯ ГЕНЕРАЦИЯ PDF (ДЛЯ ВСЕХ СЦЕНАРИЕВ)
-# ============================================================
-
-@router.callback_query(lambda c: c.data == "pdf_create" or c.data == "pdf_create_multi")
-async def create_pdf(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    data = await state.get_data()
-    method = data.get("calculation_method", "average")
-    method_text = "Средняя арифметическая" if method == "average" else "Минимальная цена (письмо Минфина)"
-    
-    # Получаем позиции
-    positions = data.get("positions", [])
-    if not positions:
-        # Если позиций нет (одиночная позиция), создаём из данных
-        prices = [
-            data.get("price_1", 0),
-            data.get("price_2", 0),
-            data.get("price_3", 0)
-        ]
-        avg_price = sum(prices) / 3 if prices else 0
-        variation = 0
-        if avg_price > 0 and len(prices) >= 3:
-            variance = sum((p - avg_price) ** 2 for p in prices) / 3
-            std_dev = variance ** 0.5
-            variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
-        positions = [{
-            "name": data.get("item_name", "Закупка"),
-            "okpd": data.get("okpd", ""),
-            "quantity": data.get("quantity", 1),
-            "unit": "шт.",
-            "prices": prices,
-            "avg_price": avg_price,
-            "variation": variation,
-            "total_price": data.get("nmck_total", 0)
-        }]
-    
-    # Подготавливаем данные для PDF
-    suppliers = []
-    for i, pos in enumerate(positions, 1):
-        suppliers.append({
-            "name": f"Поставщик {i}",
-            "price": pos.get("prices", [0])[0] if pos.get("prices") else 0,
-            "note": pos.get("name", "")
-        })
-    while len(suppliers) < 3:
-        suppliers.append({"name": f"Поставщик {len(suppliers)+1}", "price": 0, "note": "—"})
-    
-    pdf_data = prepare_pdf_data(
-        procurement={
-            "title": data.get("item_name", "Закупка"),
-            "law_type": f"{data.get('law_type', '44')}-ФЗ",
-            "nmck": data.get("nmck_total", 0),
-            "nmck_method": method_text,
-            "nmck_source": "ч. 6 ст. 22 44-ФЗ" if method == "average" else "письмо Минфина от 08.09.2017 № 24-01-09/58179",
-        },
-        suppliers=suppliers,
-        timeline=[],
-        company_name="ООО «Ваша компания»",
-        responsible_person="Иванов И.И.",
-        positions=positions,
-        method=method
-    )
-    
-    pdf_gen = PDFGenerator()
-    pdf_bytes = pdf_gen.generate(pdf_data)
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📅 Сроки", callback_data="go_to_terms")
-    builder.button(text="🆕 Новая закупка", callback_data="new_procurement")
-    builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
-    builder.adjust(1)
-    
-    await callback.message.answer_document(
-        BufferedInputFile(pdf_bytes, filename=f"НМЦК_{datetime.now().strftime('%Y%m%d')}.pdf"),
-        caption=f"📄 **Обоснование начальной (максимальной) цены контракта**\n\n"
-                f"📊 Метод: {method_text}"
-    )
-    
-    await state.clear()
-    await callback.message.answer(
-        "Что делаем дальше?",
-        reply_markup=builder.as_markup()
     )
 
 

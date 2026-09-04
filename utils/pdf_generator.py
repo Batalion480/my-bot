@@ -64,59 +64,21 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
         styles = getSampleStyleSheet()
         story = []
 
-        # Стили
-        title_style = ParagraphStyle(
-            'TitleStyle',
-            parent=styles['Heading1'],
-            fontSize=16,
-            alignment=1,
-            spaceAfter=20,
-            fontName=FONT_NAME
-        )
-        heading_style = ParagraphStyle(
-            'HeadingStyle',
-            parent=styles['Heading2'],
-            fontSize=13,
-            spaceAfter=8,
-            spaceBefore=12,
-            fontName=FONT_NAME
-        )
-        normal_style = ParagraphStyle(
-            'NormalStyle',
-            parent=styles['Normal'],
-            fontName=FONT_NAME,
-            fontSize=11
-        )
-        rule_style = ParagraphStyle(
-            'RuleStyle',
-            parent=styles['Normal'],
-            fontName=FONT_NAME,
-            fontSize=10,
-            leftIndent=20,
-            spaceAfter=4
-        )
-        article_style = ParagraphStyle(
-            'ArticleStyle',
-            parent=styles['Normal'],
-            fontName=FONT_NAME,
-            fontSize=10,
-            leftIndent=40,
-            textColor=colors.grey,
-            spaceAfter=8
-        )
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20, fontName=FONT_NAME)
+        heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=13, spaceAfter=8, spaceBefore=12, fontName=FONT_NAME)
+        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=11)
+        rule_style = ParagraphStyle('RuleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=20, spaceAfter=4)
+        article_style = ParagraphStyle('ArticleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=40, textColor=colors.grey, spaceAfter=8)
 
-        # Заголовок
         story.append(Paragraph("КАЛЕНДАРНЫЙ ПЛАН ЗАКУПКИ", title_style))
         story.append(Spacer(1, 12))
 
-        # Информация о закупке
         story.append(Paragraph(f"<b>Закон:</b> {law_type}", normal_style))
         story.append(Paragraph(f"<b>НМЦК:</b> {nmck:,.2f} руб. ({number_to_words_rubles(nmck)})", normal_style))
         story.append(Paragraph(f"<b>Дата публикации:</b> {format_date(dates.get('publication_date'))}", normal_style))
         story.append(Paragraph(f"<b>Дата подписания:</b> {format_date(dates.get('signing_date'))}", normal_style))
         story.append(Spacer(1, 16))
 
-        # Применены правила
         story.append(Paragraph("<b>Применены правила:</b>", heading_style))
         story.append(Spacer(1, 6))
 
@@ -140,13 +102,10 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
 
         story.append(Spacer(1, 16))
 
-        # Таблица дат
         story.append(Paragraph("<b>Рассчитанные даты:</b>", heading_style))
         story.append(Spacer(1, 6))
 
-        table_data = [
-            ["Этап", "Дата", "Кол-во дней"]
-        ]
+        table_data = [["Этап", "Дата", "Кол-во дней"]]
         stages = [
             ("Публикация", dates.get('publication_date'), "—"),
             ("Окончание подачи", dates.get('bid_end_date'), dates.get('applied_bid_days', '—')),
@@ -156,11 +115,7 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
             ("Подписание", dates.get('signing_date'), dates.get('applied_signing_days', '—'))
         ]
         for stage_name, stage_date, days in stages:
-            table_data.append([
-                stage_name,
-                format_date(stage_date),
-                str(days)
-            ])
+            table_data.append([stage_name, format_date(stage_date), str(days)])
 
         table = Table(table_data, colWidths=[3*inch, 2*inch, 1.5*inch])
         table.setStyle(TableStyle([
@@ -177,7 +132,6 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
         ]))
         story.append(table)
 
-        # Подпись
         story.append(Spacer(1, 40))
         story.append(Paragraph("_________________ / _________________ /", normal_style))
         story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
@@ -252,11 +206,6 @@ class PDFGenerator:
             alignment=1,
             leading=10
         )
-        table_cell_left_style = ParagraphStyle(
-            'TableCellLeftStyle',
-            parent=table_cell_style,
-            alignment=0
-        )
 
         # Заголовок
         story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
@@ -279,25 +228,46 @@ class PDFGenerator:
         if not positions:
             story.append(Paragraph("Нет данных для отображения", normal_style))
         else:
-            table_data = [
-                [
+            # Для каждой позиции создаём таблицу
+            for pos in positions:
+                # Заголовки с реквизитами КП
+                kp_numbers = pos.get('kp_numbers', ['', '', ''])
+                kp_dates = pos.get('kp_dates', ['', '', ''])
+                
+                # Формируем подписи для колонок КП
+                kp_labels = []
+                for i in range(3):
+                    label = f"КП{i+1}"
+                    if kp_dates[i] and kp_numbers[i]:
+                        label += f"\nот {kp_dates[i]}\nВх. № {kp_numbers[i]}"
+                    elif kp_dates[i]:
+                        label += f"\nот {kp_dates[i]}"
+                    elif kp_numbers[i]:
+                        label += f"\nВх. № {kp_numbers[i]}"
+                    kp_labels.append(label)
+
+                # Заголовок таблицы (первая строка) — общие колонки + КП
+                header_row = [
                     "№ п/п",
                     "Наименование позиции",
                     "ОКПД2/КТРУ",
                     "Кол-во",
                     "Ед. изм.",
-                    "КП1",
-                    "КП2",
-                    "КП3",
+                    kp_labels[0],
+                    kp_labels[1],
+                    kp_labels[2],
                     "Средняя цена за ед. (руб.)",
                     "Коэф. вариации (%)",
                     "Итого (руб.)"
                 ]
-            ]
+                # Вторая строка — подзаголовки для КП: "Цена за ед."
+                sub_header_row = ["", "", "", "", "", "Цена за ед.", "Цена за ед.", "Цена за ед.", "", "", ""]
 
-            for i, pos in enumerate(positions, 1):
+                table_data = [header_row, sub_header_row]
+
+                # Данные позиции
                 row = [
-                    str(i),
+                    "1",
                     pos.get('name', ''),
                     pos.get('okpd', ''),
                     str(pos.get('quantity', 1)),
@@ -311,42 +281,54 @@ class PDFGenerator:
                 ]
                 table_data.append(row)
 
-            # Итоговая строка
-            total_nmck = data.get('total_nmck', 0)
-            table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
+                # Итоговая строка
+                total_nmck = data.get('total_nmck', 0)
+                table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
 
-            col_widths = [
-                0.6*cm,   # №
-                4.0*cm,   # Наименование
-                2.5*cm,   # ОКПД2
-                1.2*cm,   # Кол-во
-                1.2*cm,   # Ед.изм.
-                1.8*cm,   # КП1
-                1.8*cm,   # КП2
-                1.8*cm,   # КП3
-                1.8*cm,   # Средняя
-                1.8*cm,   # Вариация
-                1.8*cm    # Итого
-            ]
+                col_widths = [
+                    0.6*cm,   # №
+                    4.0*cm,   # Наименование
+                    2.5*cm,   # ОКПД2
+                    1.2*cm,   # Кол-во
+                    1.2*cm,   # Ед.изм.
+                    1.8*cm,   # КП1
+                    1.8*cm,   # КП2
+                    1.8*cm,   # КП3
+                    1.8*cm,   # Средняя
+                    1.8*cm,   # Вариация
+                    1.8*cm    # Итого
+                ]
 
-            table = Table(table_data, colWidths=col_widths, repeatRows=1)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
-                ('FONTSIZE', (0, 0), (-1, 0), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
-                ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
-                ('FONTSIZE', (0, -1), (-1, -1), 8),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ('ALIGN', (1, 1), (1, -2), 'LEFT'),
-            ]))
-            story.append(table)
+                table = Table(table_data, colWidths=col_widths, repeatRows=2)
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                    ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+                    ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
+                    ('FONTSIZE', (0, -1), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                    ('ALIGN', (1, 2), (1, -2), 'LEFT'),  # Наименование выравниваем влево
+                    ('SPAN', (0, 0), (0, 1)),  # Объединяем № п/п
+                    ('SPAN', (1, 0), (1, 1)),  # Объединяем наименование
+                    ('SPAN', (2, 0), (2, 1)),  # ОКПД2
+                    ('SPAN', (3, 0), (3, 1)),  # Кол-во
+                    ('SPAN', (4, 0), (4, 1)),  # Ед.изм.
+                    ('SPAN', (8, 0), (8, 1)),  # Средняя
+                    ('SPAN', (9, 0), (9, 1)),  # Вариация
+                    ('SPAN', (10, 0), (10, 1)), # Итого
+                    ('BACKGROUND', (0, 1), (-1, 1), colors.lightgrey),
+                    ('FONTSIZE', (0, 1), (-1, 1), 7),
+                    ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
+                ]))
+                story.append(table)
+                story.append(Spacer(1, 12))
 
-        # Примечание в зависимости от метода
+        # Примечание
         method = data.get('method', 'average')
         story.append(Spacer(1, 20))
         if method == 'minimum':
@@ -418,6 +400,8 @@ def prepare_pdf_data(
             "quantity": pos.get('quantity', 1),
             "unit": pos.get('unit', 'шт.'),
             "prices": prices,
+            "kp_numbers": pos.get('kp_numbers', ['', '', '']),
+            "kp_dates": pos.get('kp_dates', ['', '', '']),
             "avg_price": avg_price,
             "variation": variation,
             "total_price": total_price
