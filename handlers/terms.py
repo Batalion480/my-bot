@@ -480,7 +480,7 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
     procedure = data.get("procedure")
 
     if not dates:
-        await callback.message.edit_text("⚠️ Данные не найдены. Начните расчёт заново.")
+        await callback.message.answer("⚠️ Данные не найдены. Начните расчёт заново.")
         return
 
     # Получаем правила из БД для отображения в PDF
@@ -498,10 +498,7 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
         )
 
         if pdf_path and os.path.exists(pdf_path):
-            # Удаляем сообщение с кнопками
-            await callback.message.delete()
-            
-            # Отправляем PDF
+            # Отправляем PDF новым сообщением
             await callback.message.answer_document(
                 types.FSInputFile(pdf_path),
                 caption=f"📄 Календарный план закупки\n\n"
@@ -516,10 +513,10 @@ async def generate_terms_pdf_handler(callback: types.CallbackQuery, state: FSMCo
             except:
                 pass
         else:
-            await callback.message.edit_text("❌ Не удалось сгенерировать PDF. Попробуйте ещё раз.")
+            await callback.message.answer("❌ Не удалось сгенерировать PDF. Попробуйте ещё раз.")
 
     except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {str(e)}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
 
 
 # ============================================================
