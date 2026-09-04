@@ -1,14 +1,9 @@
-# ============================================================
-# utils/pdf_generator.py
-# ============================================================
-
 import os
 import tempfile
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML, CSS
-from weasyprint.fonts import FontConfiguration
+from weasyprint import HTML
 import locale
 
 try:
@@ -50,8 +45,8 @@ class PDFGenerator:
         template = self.env.get_template(self.template_name)
         html_content = template.render(**data)
         
-        font_config = FontConfiguration()
-        pdf_bytes = HTML(string=html_content).write_pdf(font_config=font_config)
+        # Упрощённый вариант без FontConfiguration
+        pdf_bytes = HTML(string=html_content).write_pdf()
         return pdf_bytes
 
 
@@ -117,10 +112,9 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
             <p>Документ сгенерирован автоматически</p>
         </body></html>
         """
-        font_config = FontConfiguration()
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
             pdf_path = tmp.name
-            HTML(string=html).write_pdf(pdf_path, font_config=font_config)
+            HTML(string=html).write_pdf(pdf_path)
             return pdf_path
     except Exception as e:
         print(f"❌ Ошибка: {e}")
