@@ -4,9 +4,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
+from weasyprint.fonts import FontConfiguration
 import locale
-
-# v2 - исправленная версия для WeasyPrint 60.1
 
 try:
     locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
@@ -46,7 +45,8 @@ class PDFGenerator:
     def generate(self, data: Dict[str, Any]) -> bytes:
         template = self.env.get_template(self.template_name)
         html_content = template.render(**data)
-        pdf_bytes = HTML(string=html_content).write_pdf()
+        font_config = FontConfiguration()
+        pdf_bytes = HTML(string=html_content).write_pdf(font_config=font_config)
         return pdf_bytes
 
 
@@ -112,9 +112,10 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
             <p>Документ сгенерирован автоматически</p>
         </body></html>
         """
+        font_config = FontConfiguration()
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
             pdf_path = tmp.name
-            HTML(string=html).write_pdf(pdf_path)
+            HTML(string=html).write_pdf(pdf_path, font_config=font_config)
             return pdf_path
     except Exception as e:
         print(f"❌ Ошибка генерации PDF: {e}")
