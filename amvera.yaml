@@ -1,17 +1,9 @@
-meta:
-  toolchain: python
-
 app:
   type: python
   version: 3.12
 
 install:
-  - pip install --upgrade pip setuptools wheel
   - pip install -r requirements.txt
 
 run:
   - python main.py
-
-settings:
-  work_dir: /app
-  port: 80
