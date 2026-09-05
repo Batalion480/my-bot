@@ -651,7 +651,7 @@ async def handle_excel(message: Message, state: FSMContext):
 
 
 async def show_excel_result(message: Message, state: FSMContext, positions: List[Dict]):
-    """Показывает детальный расчёт по каждой позиции и общую НМЦК"""
+    """Показывает детальный расчёт по каждой позиции (без общего результата)"""
     data = await state.get_data()
     method = data.get("calculation_method", "average")
     method_text = "средней цене" if method == "average" else "минимальной цене"
@@ -690,20 +690,7 @@ async def show_excel_result(message: Message, state: FSMContext, positions: List
             text += "  ⚠️ Вариация > 33%!\n"
         text += "\n"
     
-    # Общий результат
-    all_prices = []
-    for pos in positions:
-        all_prices.extend(pos.get('prices', []))
-    if all_prices:
-        result = NMCKCalculator.calculate_nmck(prices=all_prices, method=method)
-        text += (
-            f"📈 **Общий результат:**\n"
-            f"  • Средняя цена за единицу (по всем): **{result['nmck']:,.2f} руб.**\n"
-            f"  • Коэффициент вариации (общий): {result['variation_coefficient'] * 100:.1f}%\n"
-            f"  {result.get('scatter_warning', '')}\n"
-        )
-    
-    text += f"\n💵 **Общая НМЦК контракта: {total_nmck:,.2f} руб.**"
+    text += f"💵 **Общая НМЦК контракта: {total_nmck:,.2f} руб.**"
 
     builder = InlineKeyboardBuilder()
     builder.button(text="📄 Сформировать PDF", callback_data="pdf_create")
