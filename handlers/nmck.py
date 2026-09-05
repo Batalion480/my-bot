@@ -401,10 +401,10 @@ async def generate_final_pdf(message: Message, state: FSMContext):
         for pos in positions:
             prices = pos.get('prices', [0,0,0])
             qty = pos.get('quantity', 1)
-            avg_price = sum(prices) / 3 if prices else 0
+            avg_price = sum(prices) / len(prices) if prices else 0
             variation = 0
             if avg_price > 0 and len(prices) >= 3:
-                variance = sum((p - avg_price) ** 2 for p in prices) / 3
+                variance = sum((p - avg_price) ** 2 for p in prices) / len(prices)
                 std_dev = variance ** 0.5
                 variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
             total_price = avg_price * qty
@@ -428,10 +428,10 @@ async def generate_final_pdf(message: Message, state: FSMContext):
         kp_numbers = [data.get("kp1_number",""), data.get("kp2_number",""), data.get("kp3_number","")]
         kp_dates = [data.get("kp1_date",""), data.get("kp2_date",""), data.get("kp3_date","")]
         qty = data.get("quantity",1)
-        avg_price = sum(prices) / 3 if prices else 0
+        avg_price = sum(prices) / len(prices) if prices else 0
         variation = 0
         if avg_price > 0 and len(prices) >= 3:
-            variance = sum((p - avg_price) ** 2 for p in prices) / 3
+            variance = sum((p - avg_price) ** 2 for p in prices) / len(prices)
             std_dev = variance ** 0.5
             variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
         total_price = avg_price * qty
@@ -651,40 +651,59 @@ async def handle_excel(message: Message, state: FSMContext):
 
 
 async def show_excel_result(message: Message, state: FSMContext, positions: List[Dict]):
+    """Показывает детальный расчёт по каждой позиции и общую НМЦК"""
     data = await state.get_data()
     method = data.get("calculation_method", "average")
     method_text = "средней цене" if method == "average" else "минимальной цене"
 
-    # Вычисляем общий результат (для отображения)
+    # Рассчитываем для каждой позиции
+    total_nmck = 0
+    details = []
+    for idx, pos in enumerate(positions, 1):
+        prices = pos.get('prices', [])
+        qty = pos.get('quantity', 1)
+        avg_price = sum(prices) / len(prices) if prices else 0
+        variation = 0
+        if avg_price > 0 and len(prices) >= 3:
+            variance = sum((p - avg_price) ** 2 for p in prices) / len(prices)
+            std_dev = variance ** 0.5
+            variation = (std_dev / avg_price) * 100
+        total_price = avg_price * qty
+        total_nmck += total_price
+        details.append({
+            "name": pos.get('name', f'Позиция {idx}'),
+            "avg_price": avg_price,
+            "variation": variation,
+            "total_price": total_price
+        })
+
+    # Сохраняем общую НМЦК
+    await state.update_data(nmck_total=total_nmck, nmck_for_terms=total_nmck)
+
+    # Формируем текст
+    text = f"📊 **Результат расчёта по {len(positions)} позициям:**\n\n"
+    for d in details:
+        text += f"**{d['name']}**\n"
+        text += f"  • Средняя цена за ед.: {d['avg_price']:,.2f} руб.\n"
+        text += f"  • Коэффициент вариации: {d['variation']:.1f}%\n"
+        if d['variation'] > 33:
+            text += "  ⚠️ Вариация > 33%!\n"
+        text += "\n"
+    
+    # Общий результат
     all_prices = []
     for pos in positions:
         all_prices.extend(pos.get('prices', []))
-    if len(all_prices) < 3:
-        await message.answer("❌ Недостаточно цен для расчёта. Нужно минимум 3 цены.")
-        return
-
-    result = NMCKCalculator.calculate_nmck(prices=all_prices, method=method)
-    total_nmck = 0
-    for pos in positions:
-        qty = pos.get('quantity', 1)
-        avg_price = sum(pos.get('prices', [])) / len(pos.get('prices', [])) if pos.get('prices') else 0
-        total_nmck += avg_price * qty
-
-    await state.update_data(
-        nmck_result=result,
-        nmck=result['nmck'],
-        nmck_total=total_nmck,
-        nmck_for_terms=total_nmck
-    )
-
-    text = (
-        f"📊 **Результат расчёта по {len(positions)} позициям:**\n\n"
-        f"📊 Метод: {method_text}\n"
-        f"📈 Средняя цена за единицу: **{result['nmck']:,.2f} руб.**\n"
-        f"📊 Коэффициент вариации: {result['variation_coefficient'] * 100:.1f}%\n"
-        f"{result.get('scatter_warning', '')}\n\n"
-        f"💵 **Общая НМЦК контракта: {total_nmck:,.2f} руб.**\n"
-    )
+    if all_prices:
+        result = NMCKCalculator.calculate_nmck(prices=all_prices, method=method)
+        text += (
+            f"📈 **Общий результат:**\n"
+            f"  • Средняя цена за единицу (по всем): **{result['nmck']:,.2f} руб.**\n"
+            f"  • Коэффициент вариации (общий): {result['variation_coefficient'] * 100:.1f}%\n"
+            f"  {result.get('scatter_warning', '')}\n"
+        )
+    
+    text += f"\n💵 **Общая НМЦК контракта: {total_nmck:,.2f} руб.**"
 
     builder = InlineKeyboardBuilder()
     builder.button(text="📄 Сформировать PDF", callback_data="pdf_create")
