@@ -675,7 +675,7 @@ async def new_procurement(callback: CallbackQuery, state: FSMContext):
 @router.message(Command("template"))
 async def send_template(message: types.Message):
     """Отправка Excel-шаблона для заполнения НМЦК"""
-    file_path = "static/nmck_template.xlsx"
+    file_path = "static/nmck_template_v2.xlsx"
     if os.path.exists(file_path):
         await message.answer_document(
             types.FSInputFile(file_path),
