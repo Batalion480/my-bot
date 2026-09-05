@@ -114,13 +114,9 @@ def extract_unit(text: str) -> str:
 
 
 def extract_kp_details(header: str) -> tuple:
-    """
-    Извлекает номер и дату из заголовка колонки вида:
-    "Коммерческое предложение 1 от 28.08.2026 Вх. № 5"
-    """
     match = re.search(r'от\s*([\d.]+)\s*Вх\.\s*№\s*([\d]+)', header)
     if match:
-        return match.group(1), match.group(2)  # дата, номер
+        return match.group(1), match.group(2)
     return None, None
 
 
@@ -320,11 +316,9 @@ async def process_quantity(message: Message, state: FSMContext):
 async def start_pdf_collection(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
-    # Если режим Excel — сразу генерируем PDF
     if data.get("excel_mode"):
         await generate_final_pdf(callback.message, state)
         return
-    # Иначе собираем реквизиты
     await state.set_state(NMCKStates.waiting_for_item_name)
     await callback.message.edit_text(
         "📝 Для формирования PDF введите **наименование позиции**:"
@@ -397,63 +391,67 @@ async def process_kp3_date(message: Message, state: FSMContext):
 
 async def generate_final_pdf(message: Message, state: FSMContext):
     data = await state.get_data()
-    
     method = data.get("calculation_method", "average")
     method_text = "Средняя арифметическая" if method == "average" else "Минимальная цена (письмо Минфина)"
     
-    # Если есть позиции из Excel, используем их
     positions = data.get("positions", [])
     if positions:
-        # Для Excel реквизиты уже встроены в позиции
-        pdf_positions = positions
-        total_nmck = data.get("nmck_total", 0)
+        # Для Excel / много позиций — уже есть список позиций
+        pdf_positions = []
+        for pos in positions:
+            prices = pos.get('prices', [0,0,0])
+            qty = pos.get('quantity', 1)
+            avg_price = sum(prices) / 3 if prices else 0
+            variation = 0
+            if avg_price > 0 and len(prices) >= 3:
+                variance = sum((p - avg_price) ** 2 for p in prices) / 3
+                std_dev = variance ** 0.5
+                variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
+            total_price = avg_price * qty
+            pdf_positions.append({
+                "name": pos.get('name', ''),
+                "okpd": pos.get('okpd', ''),
+                "quantity": qty,
+                "unit": pos.get('unit', 'шт.'),
+                "prices": prices,
+                "kp_numbers": pos.get('kp_numbers', ['','','']),
+                "kp_dates": pos.get('kp_dates', ['','','']),
+                "avg_price": avg_price,
+                "variation": variation,
+                "total_price": total_price
+            })
+        total_nmck = sum(p['total_price'] for p in pdf_positions)
+        await state.update_data(nmck_total=total_nmck)
     else:
         # Ручной ввод (1 позиция)
-        prices = [
-            data.get("price_1", 0),
-            data.get("price_2", 0),
-            data.get("price_3", 0)
-        ]
-        kp_numbers = [
-            data.get("kp1_number", ""),
-            data.get("kp2_number", ""),
-            data.get("kp3_number", "")
-        ]
-        kp_dates = [
-            data.get("kp1_date", ""),
-            data.get("kp2_date", ""),
-            data.get("kp3_date", "")
-        ]
-        
+        prices = [data.get("price_1",0), data.get("price_2",0), data.get("price_3",0)]
+        kp_numbers = [data.get("kp1_number",""), data.get("kp2_number",""), data.get("kp3_number","")]
+        kp_dates = [data.get("kp1_date",""), data.get("kp2_date",""), data.get("kp3_date","")]
+        qty = data.get("quantity",1)
         avg_price = sum(prices) / 3 if prices else 0
         variation = 0
         if avg_price > 0 and len(prices) >= 3:
             variance = sum((p - avg_price) ** 2 for p in prices) / 3
             std_dev = variance ** 0.5
             variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
-        
+        total_price = avg_price * qty
         pdf_positions = [{
             "name": data.get("item_name", "Закупка"),
             "okpd": data.get("okpd", ""),
-            "quantity": data.get("quantity", 1),
+            "quantity": qty,
             "unit": "шт.",
             "prices": prices,
             "kp_numbers": kp_numbers,
             "kp_dates": kp_dates,
             "avg_price": avg_price,
             "variation": variation,
-            "total_price": data.get("nmck_total", 0)
+            "total_price": total_price
         }]
-        total_nmck = data.get("nmck_total", 0)
+        total_nmck = total_price
     
-    # Подготавливаем данные для PDF
     suppliers = []
     for i in range(3):
-        suppliers.append({
-            "name": f"Поставщик {i+1}",
-            "price": 0,
-            "note": f"КП {i+1}"
-        })
+        suppliers.append({"name": f"Поставщик {i+1}", "price": 0, "note": f"КП {i+1}"})
     
     pdf_data = prepare_pdf_data(
         procurement={
@@ -487,10 +485,7 @@ async def generate_final_pdf(message: Message, state: FSMContext):
     )
     
     await state.clear()
-    await message.answer(
-        "Что делаем дальше?",
-        reply_markup=builder.as_markup()
-    )
+    await message.answer("Что делаем дальше?", reply_markup=builder.as_markup())
 
 
 # ============================================================
@@ -553,11 +548,9 @@ async def handle_excel(message: Message, state: FSMContext):
     try:
         df = pd.read_excel(file_path, dtype=str)
 
-        # Отладка: список колонок
         cols = list(df.columns)
         await message.answer(f"📋 Найдены колонки: {', '.join(cols)}")
 
-        # Сопоставление колонок
         col_map = {}
         for col in df.columns:
             col_str = str(col).strip().lower()
@@ -580,7 +573,6 @@ async def handle_excel(message: Message, state: FSMContext):
             elif 'коммерческое предложение 3' in col_str or 'кп3' in col_str:
                 col_map['price3'] = col
 
-        # Выводим сопоставление
         mapping_info = "\n".join([f"{k} → {v}" for k, v in col_map.items()])
         await message.answer(f"🔍 Сопоставление колонок:\n{mapping_info}")
 
@@ -593,7 +585,6 @@ async def handle_excel(message: Message, state: FSMContext):
             )
             return
 
-        # Извлекаем реквизиты КП из заголовков
         kp_numbers = ["", "", ""]
         kp_dates = ["", "", ""]
         for col in df.columns:
@@ -614,7 +605,6 @@ async def handle_excel(message: Message, state: FSMContext):
                     kp_dates[2] = d
                     kp_numbers[2] = n
 
-        # Парсим данные
         positions = []
         for index, row in df.iterrows():
             if pd.isna(row[col_map['name']]) or str(row[col_map['name']]).strip() == '':
@@ -647,7 +637,6 @@ async def handle_excel(message: Message, state: FSMContext):
             await message.answer("❌ Не найдено данных для расчёта. Проверьте заполнение файла.")
             return
 
-        # Сохраняем позиции и реквизиты
         await state.update_data(
             positions=positions,
             excel_mode=True,
@@ -655,7 +644,6 @@ async def handle_excel(message: Message, state: FSMContext):
             kp_dates=kp_dates
         )
 
-        # Выполняем расчёт и показываем результат БЕЗ вопросов
         await show_excel_result(message, state, positions)
 
     except Exception as e:
@@ -663,23 +651,19 @@ async def handle_excel(message: Message, state: FSMContext):
 
 
 async def show_excel_result(message: Message, state: FSMContext, positions: List[Dict]):
-    """Показывает результат расчёта для Excel и кнопку для PDF"""
     data = await state.get_data()
     method = data.get("calculation_method", "average")
     method_text = "средней цене" if method == "average" else "минимальной цене"
 
-    # Собираем все цены
+    # Вычисляем общий результат (для отображения)
     all_prices = []
     for pos in positions:
         all_prices.extend(pos.get('prices', []))
-
     if len(all_prices) < 3:
         await message.answer("❌ Недостаточно цен для расчёта. Нужно минимум 3 цены.")
         return
 
     result = NMCKCalculator.calculate_nmck(prices=all_prices, method=method)
-
-    # Вычисляем общую НМЦК
     total_nmck = 0
     for pos in positions:
         qty = pos.get('quantity', 1)
@@ -737,7 +721,6 @@ async def new_procurement(callback: CallbackQuery, state: FSMContext):
 
 @router.message(Command("template"))
 async def send_template(message: types.Message):
-    """Отправка Excel-шаблона для заполнения НМЦК"""
     file_path = "static/nmck_template_v2.xlsx"
     if os.path.exists(file_path):
         await message.answer_document(

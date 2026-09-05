@@ -19,7 +19,6 @@ except:
     except:
         pass
 
-# Регистрируем шрифт для кириллицы
 FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'fonts')
 FONT_FILE = os.path.join(FONT_DIR, 'DejaVuSans.ttf')
 if os.path.exists(FONT_FILE):
@@ -46,11 +45,10 @@ def format_date(d) -> str:
 
 
 # ============================================================
-# ГЕНЕРАЦИЯ PDF ДЛЯ СРОКОВ
+# ГЕНЕРАЦИЯ PDF ДЛЯ СРОКОВ (без изменений)
 # ============================================================
 
 def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", responsible_person=""):
-    """Генерация PDF для календарного плана с правилами"""
     try:
         import io
         from reportlab.lib.pagesizes import A4
@@ -153,7 +151,7 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
 
 
 # ============================================================
-# ГЕНЕРАЦИЯ PDF ДЛЯ НМЦК
+# ГЕНЕРАЦИЯ PDF ДЛЯ НМЦК (ОДНА ОБЩАЯ ТАБЛИЦА)
 # ============================================================
 
 class PDFGenerator:
@@ -189,15 +187,6 @@ class PDFGenerator:
             fontName=FONT_NAME,
             fontSize=11
         )
-        table_header_style = ParagraphStyle(
-            'TableHeaderStyle',
-            parent=styles['Normal'],
-            fontName=FONT_NAME,
-            fontSize=9,
-            alignment=1,
-            textColor=colors.whitesmoke,
-            leading=12
-        )
         table_cell_style = ParagraphStyle(
             'TableCellStyle',
             parent=styles['Normal'],
@@ -205,6 +194,11 @@ class PDFGenerator:
             fontSize=8,
             alignment=1,
             leading=10
+        )
+        table_cell_left_style = ParagraphStyle(
+            'TableCellLeftStyle',
+            parent=table_cell_style,
+            alignment=0
         )
 
         # Заголовок
@@ -223,110 +217,130 @@ class PDFGenerator:
             story.append(Paragraph(f"<b>{label}</b> {value}", normal_style))
         story.append(Spacer(1, 12))
 
-        # Таблица позиций
+        # Таблица позиций (одна общая)
         positions = data.get('positions', [])
         if not positions:
             story.append(Paragraph("Нет данных для отображения", normal_style))
         else:
-            # Для каждой позиции создаём таблицу
-            for pos in positions:
-                # Заголовки с реквизитами КП
-                kp_numbers = pos.get('kp_numbers', ['', '', ''])
-                kp_dates = pos.get('kp_dates', ['', '', ''])
-                
-                # Формируем подписи для колонок КП
-                kp_labels = []
-                for i in range(3):
-                    label = f"КП{i+1}"
-                    if kp_dates[i] and kp_numbers[i]:
-                        label += f"\nот {kp_dates[i]}\nВх. № {kp_numbers[i]}"
-                    elif kp_dates[i]:
-                        label += f"\nот {kp_dates[i]}"
-                    elif kp_numbers[i]:
-                        label += f"\nВх. № {kp_numbers[i]}"
-                    kp_labels.append(label)
+            # Реквизиты КП (берём из первой позиции, предполагаем одинаковые)
+            kp_numbers = positions[0].get('kp_numbers', ['', '', ''])
+            kp_dates = positions[0].get('kp_dates', ['', '', ''])
+            
+            # Подписи для КП
+            kp_labels = []
+            for i in range(3):
+                label = f"КП{i+1}"
+                if kp_dates[i] and kp_numbers[i]:
+                    label += f"\nот {kp_dates[i]}\nВх. № {kp_numbers[i]}"
+                elif kp_dates[i]:
+                    label += f"\nот {kp_dates[i]}"
+                elif kp_numbers[i]:
+                    label += f"\nВх. № {kp_numbers[i]}"
+                kp_labels.append(label)
 
-                # Заголовок таблицы (первая строка) — общие колонки + КП
-                header_row = [
-                    "№ п/п",
-                    "Наименование позиции",
-                    "ОКПД2/КТРУ",
-                    "Кол-во",
-                    "Ед. изм.",
-                    kp_labels[0],
-                    kp_labels[1],
-                    kp_labels[2],
-                    "Средняя цена за ед. (руб.)",
-                    "Коэф. вариации (%)",
-                    "Итого (руб.)"
-                ]
-                # Вторая строка — подзаголовки для КП: "Цена за ед."
-                sub_header_row = ["", "", "", "", "", "Цена за ед.", "Цена за ед.", "Цена за ед.", "", "", ""]
+            # Заголовок таблицы (первая строка)
+            header_row = [
+                "№ п/п",
+                "Наименование позиции",
+                "ОКПД2/КТРУ",
+                "Кол-во",
+                "Ед. изм.",
+                kp_labels[0],
+                kp_labels[1],
+                kp_labels[2],
+                "Средняя цена за ед. (руб.)",
+                "Коэф. вариации (%)",
+                "Итого (руб.)"
+            ]
+            # Вторая строка — подзаголовки для КП
+            sub_header_row = [
+                "", "", "", "", "",
+                "Цена за ед.\nОбщая цена",
+                "Цена за ед.\nОбщая цена",
+                "Цена за ед.\nОбщая цена",
+                "", "", ""
+            ]
 
-                table_data = [header_row, sub_header_row]
+            table_data = [header_row, sub_header_row]
 
-                # Данные позиции
+            # Строки позиций
+            total_nmck = 0
+            for idx, pos in enumerate(positions, 1):
+                prices = pos.get('prices', [0,0,0])
+                qty = pos.get('quantity', 1)
+                avg_price = pos.get('avg_price', 0)
+                variation = pos.get('variation', 0)
+                total_price = pos.get('total_price', 0)
+                total_nmck += total_price
+
+                # Ячейки КП (цена за ед. + общая цена)
+                kp_cells = []
+                for price in prices:
+                    total = price * qty
+                    cell_text = f"<b>{price:.2f}</b>\n{total:.2f}"
+                    kp_cells.append(Paragraph(cell_text, table_cell_style))
+
                 row = [
-                    "1",
+                    str(idx),
                     pos.get('name', ''),
                     pos.get('okpd', ''),
-                    str(pos.get('quantity', 1)),
+                    str(qty),
                     pos.get('unit', 'шт.'),
-                    f"{pos.get('prices', [0,0,0])[0]:.2f}",
-                    f"{pos.get('prices', [0,0,0])[1]:.2f}",
-                    f"{pos.get('prices', [0,0,0])[2]:.2f}",
-                    f"{pos.get('avg_price', 0):.2f}",
-                    f"{pos.get('variation', 0):.2f}",
-                    f"{pos.get('total_price', 0):.2f}"
+                    kp_cells[0],
+                    kp_cells[1],
+                    kp_cells[2],
+                    f"{avg_price:.2f}",
+                    f"{variation:.2f}",
+                    f"{total_price:.2f}"
                 ]
                 table_data.append(row)
 
-                # Итоговая строка
-                total_nmck = data.get('total_nmck', 0)
-                table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
+            # Итоговая строка
+            table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
 
-                col_widths = [
-                    0.6*cm,   # №
-                    4.0*cm,   # Наименование
-                    2.5*cm,   # ОКПД2
-                    1.2*cm,   # Кол-во
-                    1.2*cm,   # Ед.изм.
-                    1.8*cm,   # КП1
-                    1.8*cm,   # КП2
-                    1.8*cm,   # КП3
-                    1.8*cm,   # Средняя
-                    1.8*cm,   # Вариация
-                    1.8*cm    # Итого
-                ]
+            # Ширина колонок
+            col_widths = [
+                0.6*cm,   # №
+                4.0*cm,   # Наименование
+                2.5*cm,   # ОКПД2
+                1.2*cm,   # Кол-во
+                1.2*cm,   # Ед.изм.
+                2.0*cm,   # КП1
+                2.0*cm,   # КП2
+                2.0*cm,   # КП3
+                1.8*cm,   # Средняя
+                1.8*cm,   # Вариация
+                1.8*cm    # Итого
+            ]
 
-                table = Table(table_data, colWidths=col_widths, repeatRows=2)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
-                    ('FONTSIZE', (0, 0), (-1, 0), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                    ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
-                    ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
-                    ('FONTSIZE', (0, -1), (-1, -1), 8),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                    ('ALIGN', (1, 2), (1, -2), 'LEFT'),  # Наименование выравниваем влево
-                    ('SPAN', (0, 0), (0, 1)),  # Объединяем № п/п
-                    ('SPAN', (1, 0), (1, 1)),  # Объединяем наименование
-                    ('SPAN', (2, 0), (2, 1)),  # ОКПД2
-                    ('SPAN', (3, 0), (3, 1)),  # Кол-во
-                    ('SPAN', (4, 0), (4, 1)),  # Ед.изм.
-                    ('SPAN', (8, 0), (8, 1)),  # Средняя
-                    ('SPAN', (9, 0), (9, 1)),  # Вариация
-                    ('SPAN', (10, 0), (10, 1)), # Итого
-                    ('BACKGROUND', (0, 1), (-1, 1), colors.lightgrey),
-                    ('FONTSIZE', (0, 1), (-1, 1), 7),
-                    ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
-                ]))
-                story.append(table)
-                story.append(Spacer(1, 12))
+            table = Table(table_data, colWidths=col_widths, repeatRows=2)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+                ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
+                ('FONTSIZE', (0, -1), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ('ALIGN', (1, 2), (1, -2), 'LEFT'),  # Наименование выравниваем влево
+                ('SPAN', (0, 0), (0, 1)),  # № п/п
+                ('SPAN', (1, 0), (1, 1)),  # Наименование
+                ('SPAN', (2, 0), (2, 1)),  # ОКПД2
+                ('SPAN', (3, 0), (3, 1)),  # Кол-во
+                ('SPAN', (4, 0), (4, 1)),  # Ед.изм.
+                ('SPAN', (8, 0), (8, 1)),  # Средняя
+                ('SPAN', (9, 0), (9, 1)),  # Вариация
+                ('SPAN', (10, 0), (10, 1)), # Итого
+                ('BACKGROUND', (0, 1), (-1, 1), colors.lightgrey),
+                ('FONTSIZE', (0, 1), (-1, 1), 7),
+                ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
 
         # Примечание
         method = data.get('method', 'average')
@@ -391,9 +405,9 @@ def prepare_pdf_data(
         while len(prices) < 3:
             prices.append(0)
         prices = prices[:3]
-        avg_price = sum(prices) / 3 if prices else 0
+        avg_price = pos.get('avg_price', 0)
         variation = pos.get('variation', 0)
-        total_price = avg_price * pos.get('quantity', 1)
+        total_price = pos.get('total_price', 0)
         formatted_positions.append({
             "name": pos.get('name', ''),
             "okpd": pos.get('okpd', ''),
