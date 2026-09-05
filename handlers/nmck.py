@@ -250,7 +250,6 @@ async def process_price_3(message: Message, state: FSMContext):
         return
     
     await state.update_data(price_3=price)
-    # Переходим к запросу количества
     await state.set_state(NMCKStates.waiting_for_quantity)
     await message.answer("📦 Введите **количество** (условная единица):")
 
@@ -277,7 +276,7 @@ async def process_quantity(message: Message, state: FSMContext):
         quantity=quantity,
         nmck_total=nmck_total,
         prices=prices,
-        nmck_for_terms=nmck_total  # ← СОХРАНЯЕМ ДЛЯ СРОКОВ
+        nmck_for_terms=nmck_total
     )
     
     method_text = "средней цене" if method == "average" else "минимальной цене"
@@ -294,12 +293,12 @@ async def process_quantity(message: Message, state: FSMContext):
     
     builder = InlineKeyboardBuilder()
     builder.button(text="📄 Сформировать PDF", callback_data="pdf_create")
-    builder.button(text="📅 Сроки", callback_data="go_to_terms")  # ← БЕЗ УДАЛЕНИЯ СООБЩЕНИЯ
+    builder.button(text="📅 Сроки", callback_data="go_to_terms")
     builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
     builder.adjust(1)
     
     await state.set_state(NMCKStates.waiting_for_final_action)
-    await message.answer(text, reply_markup=builder.as_markup())  # ← ОТПРАВЛЯЕМ НОВОЕ СООБЩЕНИЕ
+    await message.answer(text, reply_markup=builder.as_markup())
 
 
 # ============================================================
@@ -372,7 +371,6 @@ async def process_kp3_number(message: Message, state: FSMContext):
 @router.message(NMCKStates.waiting_for_kp3_date)
 async def process_kp3_date(message: Message, state: FSMContext):
     await state.update_data(kp3_date=message.text.strip())
-    # Все данные собраны — генерируем PDF
     await generate_final_pdf(message, state)
 
 
@@ -409,7 +407,6 @@ async def generate_final_pdf(message: Message, state: FSMContext):
         std_dev = variance ** 0.5
         variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
     
-    # Формируем позицию с реквизитами
     positions = [{
         "name": data.get("item_name", "Закупка"),
         "okpd": data.get("okpd", ""),
@@ -423,7 +420,6 @@ async def generate_final_pdf(message: Message, state: FSMContext):
         "total_price": data.get("nmck_total", 0)
     }]
     
-    # Подготавливаем данные для PDF
     suppliers = []
     for i in range(3):
         suppliers.append({
@@ -501,13 +497,7 @@ async def input_excel(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "📂 Загрузите Excel-файл (`.xlsx` или `.xls`).\n\n"
-        "Файл должен содержать колонки:\n"
-        "• Наименование\n"
-        "• Ед.изм.\n"
-        "• Кол-во\n"
-        "• Цена1\n"
-        "• Цена2\n"
-        "• Цена3\n\n"
+        "Файл должен содержать колонки с ценами и реквизитами.\n"
         "Вы можете скачать шаблон:",
         reply_markup=builder.as_markup()
     )
@@ -525,71 +515,80 @@ async def handle_excel(message: Message, state: FSMContext):
     if not document.file_name.endswith(('.xlsx', '.xls')):
         await message.answer("⚠️ Пожалуйста, загрузите файл Excel (.xlsx или .xls)")
         return
-    
+
     file = await message.bot.get_file(document.file_id)
     file_path = f"temp/{document.file_id}.xlsx"
     os.makedirs("temp", exist_ok=True)
     await message.bot.download_file(file.file_path, file_path)
-    
+
     await message.answer("🔍 Парсинг файла...")
-    
+
     try:
-        df = pd.read_excel(file_path)
-        
-        expected_cols = [
-            'п/п №', 
-            'Наименование позиции', 
-            'ОКПД2/КТРУ', 
-            'ед.изм.', 
-            'кол.',
-            'Коммерческое предложение 1 от __________ Вх. № ____',
-            'Коммерческое предложение 2 от __________ Вх. № ____',
-            'Коммерческое предложение 3 от __________ Вх. № ____'
-        ]
-        
-        for col in expected_cols:
-            if col not in df.columns:
-                await message.answer(
-                    f"⚠️ В файле отсутствует колонка '{col}'. "
-                    "Пожалуйста, используйте шаблон, скачанный через /template"
-                )
-                return
-        
+        df = pd.read_excel(file_path, dtype=str)
+
+        # Сопоставляем колонки по частичному совпадению
+        col_map = {}
+        for col in df.columns:
+            col_str = str(col).strip().lower()
+            if 'п/п' in col_str or 'пп' in col_str:
+                col_map['pp'] = col
+            elif 'наименование' in col_str:
+                col_map['name'] = col
+            elif 'окпд' in col_str:
+                col_map['okpd'] = col
+            elif 'ед.изм' in col_str or 'единиц' in col_str:
+                col_map['unit'] = col
+            elif 'кол' in col_str and 'во' in col_str:
+                col_map['qty'] = col
+            elif 'коммерческое предложение 1' in col_str:
+                col_map['price1'] = col
+            elif 'коммерческое предложение 2' in col_str:
+                col_map['price2'] = col
+            elif 'коммерческое предложение 3' in col_str:
+                col_map['price3'] = col
+
+        required = ['pp', 'name', 'okpd', 'unit', 'qty', 'price1', 'price2', 'price3']
+        missing = [k for k in required if k not in col_map]
+        if missing:
+            await message.answer(
+                f"⚠️ Не найдены колонки: {', '.join(missing)}.\n"
+                "Пожалуйста, используйте шаблон, скачанный через /template"
+            )
+            return
+
         positions = []
         for index, row in df.iterrows():
-            if pd.isna(row['Наименование позиции']) or str(row['Наименование позиции']).strip() == '':
+            if pd.isna(row[col_map['name']]) or str(row[col_map['name']]).strip() == '':
                 continue
-                
-            prices = []
-            for i in range(1, 4):
-                col_name = f'Коммерческое предложение {i} от __________ Вх. № ____'
-                val = row[col_name]
-                try:
-                    if isinstance(val, str):
-                        val = val.replace(' ', '').replace(',', '.')
-                    price = float(val)
-                    prices.append(price)
-                except (ValueError, TypeError):
-                    prices.append(0.0)
-            
-            if all(p == 0 for p in prices):
+
+            try:
+                price1 = float(row[col_map['price1']].replace(',', '.').replace(' ', ''))
+                price2 = float(row[col_map['price2']].replace(',', '.').replace(' ', ''))
+                price3 = float(row[col_map['price3']].replace(',', '.').replace(' ', ''))
+            except (ValueError, AttributeError):
                 continue
-            
+
+            qty_str = str(row[col_map['qty']]).replace(',', '.').replace(' ', '')
+            try:
+                qty = float(qty_str)
+            except ValueError:
+                qty = 1.0
+
             positions.append({
-                "name": str(row['Наименование позиции']),
-                "okpd": str(row['ОКПД2/КТРУ']) if not pd.isna(row['ОКПД2/КТРУ']) else "",
-                "unit": str(row['ед.изм.']) if not pd.isna(row['ед.изм.']) else "шт.",
-                "quantity": float(row['кол.']) if not pd.isna(row['кол.']) else 1,
-                "prices": prices
+                "name": str(row[col_map['name']]).strip(),
+                "okpd": str(row[col_map['okpd']]).strip(),
+                "unit": str(row[col_map['unit']]).strip(),
+                "quantity": qty,
+                "prices": [price1, price2, price3]
             })
-        
+
         if not positions:
             await message.answer("❌ Не найдено данных для расчёта. Проверьте заполнение файла.")
             return
-        
+
         await state.update_data(positions=positions)
         await calculate_multi_position_nmck(message, state, positions=positions)
-        
+
     except Exception as e:
         await message.answer(f"❌ Ошибка парсинга: {e}\n\nПроверьте, что файл соответствует шаблону.")
 
@@ -639,10 +638,9 @@ async def calculate_multi_position_nmck(message: types.Message, state: FSMContex
         nmck_total=total_nmck, 
         positions=positions,
         calculation_method=method,
-        nmck_for_terms=total_nmck  # ← СОХРАНЯЕМ ДЛЯ СРОКОВ
+        nmck_for_terms=total_nmck
     )
     
-    # Переходим к сбору реквизитов (для много позиций)
     await state.set_state(NMCKStates.waiting_for_item_name)
     await message.answer(
         "📝 Введите **наименование позиции** (или 'все' для общей позиции):"
