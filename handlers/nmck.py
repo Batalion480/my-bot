@@ -483,7 +483,7 @@ async def input_photo(callback: CallbackQuery, state: FSMContext):
 
 
 # ============================================================
-# ЗАГРУЗКА EXCEL (МНОГО ПОЗИЦИЙ)
+# ЗАГРУЗКА EXCEL (МНОГО ПОЗИЦИЙ) С УЛУЧШЕННЫМ ПАРСИНГОМ
 # ============================================================
 
 @router.callback_query(lambda c: c.data == "input_excel")
@@ -526,26 +526,37 @@ async def handle_excel(message: Message, state: FSMContext):
     try:
         df = pd.read_excel(file_path, dtype=str)
 
-        # Сопоставляем колонки по частичному совпадению
+        # Отладка: список колонок
+        cols = list(df.columns)
+        await message.answer(f"📋 Найдены колонки: {', '.join(cols)}")
+
+        # Улучшенное сопоставление колонок
         col_map = {}
         for col in df.columns:
             col_str = str(col).strip().lower()
-            if 'п/п' in col_str or 'пп' in col_str:
+            # Убираем точки, пробелы, лишние символы
+            col_clean = col_str.replace('.', '').replace(' ', '').replace('№', '').replace('(', '').replace(')', '')
+            
+            if 'п/п' in col_str or 'пп' in col_str or 'пп№' in col_clean:
                 col_map['pp'] = col
-            elif 'наименование' in col_str:
+            elif 'наименование' in col_str or 'название' in col_str:
                 col_map['name'] = col
             elif 'окпд' in col_str:
                 col_map['okpd'] = col
-            elif 'ед.изм' in col_str or 'единиц' in col_str:
+            elif 'ед.изм' in col_str or 'единиц' in col_str or col_clean == 'ед' or col_clean == 'единица':
                 col_map['unit'] = col
-            elif 'кол' in col_str and 'во' in col_str:
+            elif 'кол' in col_str or 'количество' in col_str:
                 col_map['qty'] = col
-            elif 'коммерческое предложение 1' in col_str:
+            elif 'коммерческое предложение 1' in col_str or 'кп1' in col_str:
                 col_map['price1'] = col
-            elif 'коммерческое предложение 2' in col_str:
+            elif 'коммерческое предложение 2' in col_str or 'кп2' in col_str:
                 col_map['price2'] = col
-            elif 'коммерческое предложение 3' in col_str:
+            elif 'коммерческое предложение 3' in col_str or 'кп3' in col_str:
                 col_map['price3'] = col
+
+        # Выводим сопоставление
+        mapping_info = "\n".join([f"{k} → {v}" for k, v in col_map.items()])
+        await message.answer(f"🔍 Сопоставление колонок:\n{mapping_info}")
 
         required = ['pp', 'name', 'okpd', 'unit', 'qty', 'price1', 'price2', 'price3']
         missing = [k for k in required if k not in col_map]
@@ -562,9 +573,9 @@ async def handle_excel(message: Message, state: FSMContext):
                 continue
 
             try:
-                price1 = float(row[col_map['price1']].replace(',', '.').replace(' ', ''))
-                price2 = float(row[col_map['price2']].replace(',', '.').replace(' ', ''))
-                price3 = float(row[col_map['price3']].replace(',', '.').replace(' ', ''))
+                price1 = float(str(row[col_map['price1']]).replace(',', '.').replace(' ', ''))
+                price2 = float(str(row[col_map['price2']]).replace(',', '.').replace(' ', ''))
+                price3 = float(str(row[col_map['price3']]).replace(',', '.').replace(' ', ''))
             except (ValueError, AttributeError):
                 continue
 
