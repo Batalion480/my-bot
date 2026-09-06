@@ -19,6 +19,7 @@ except:
     except:
         pass
 
+# Регистрируем шрифт для кириллицы
 FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'fonts')
 FONT_FILE = os.path.join(FONT_DIR, 'DejaVuSans.ttf')
 if os.path.exists(FONT_FILE):
@@ -45,10 +46,285 @@ def format_date(d) -> str:
 
 
 # ============================================================
-# ГЕНЕРАЦИЯ PDF ДЛЯ СРОКОВ (без изменений)
+# ГЕНЕРАЦИЯ PDF ДЛЯ НМЦК (по образу примера)
 # ============================================================
 
+class PDFGenerator:
+    def __init__(self):
+        pass
+
+    def generate(self, data: Dict[str, Any]) -> bytes:
+        import io
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        styles = getSampleStyleSheet()
+        story = []
+
+        # Стили
+        title_style = ParagraphStyle(
+            'TitleStyle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            alignment=1,  # center
+            spaceAfter=20,
+            fontName=FONT_NAME
+        )
+        normal_style = ParagraphStyle(
+            'NormalStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=11
+        )
+        table_cell_style = ParagraphStyle(
+            'TableCellStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=8,
+            alignment=1,
+            leading=10
+        )
+        table_cell_left_style = ParagraphStyle(
+            'TableCellLeftStyle',
+            parent=table_cell_style,
+            alignment=0
+        )
+
+        # Заголовок
+        story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
+        story.append(Spacer(1, 12))
+
+        # Таблица позиций (одна общая)
+        positions = data.get('positions', [])
+        if not positions:
+            story.append(Paragraph("Нет данных для отображения", normal_style))
+        else:
+            # Извлекаем реквизиты КП из первой позиции (они должны быть одинаковы для всех)
+            kp_numbers = positions[0].get('kp_numbers', ['', '', ''])
+            kp_dates = positions[0].get('kp_dates', ['', '', ''])
+
+            # Заголовки КП
+            kp_labels = []
+            for i in range(3):
+                label = f"Коммерческое предложение {i+1}"
+                if kp_dates[i] and kp_numbers[i]:
+                    label += f"\nот {kp_dates[i]} Вх. № {kp_numbers[i]}"
+                elif kp_dates[i]:
+                    label += f"\nот {kp_dates[i]}"
+                elif kp_numbers[i]:
+                    label += f"\nВх. № {kp_numbers[i]}"
+                kp_labels.append(label)
+
+            # Первая строка заголовка (объединяем ячейки для КП по вертикали)
+            header_row1 = [
+                "№ п/п",
+                "Наименование позиции",
+                "ОКПД2/КТРУ",
+                "Кол-во",
+                "Ед. изм.",
+                kp_labels[0],
+                kp_labels[1],
+                kp_labels[2],
+                "Средняя цена за ед. (руб.)",
+                "Коэф. вариации (%)",
+                "Итого (руб.)"
+            ]
+
+            # Вторая строка — подзаголовки для КП
+            sub_header_row = [
+                "", "", "", "", "",
+                "Цена за ед.\nОбщая цена",
+                "Цена за ед.\nОбщая цена",
+                "Цена за ед.\nОбщая цена",
+                "", "", ""
+            ]
+
+            # Собираем данные
+            table_data = [header_row1, sub_header_row]
+            total_nmck = 0
+
+            for idx, pos in enumerate(positions, 1):
+                prices = pos.get('prices', [0, 0, 0])
+                qty = pos.get('quantity', 1)
+                avg_price = pos.get('avg_price', sum(prices) / len(prices) if prices else 0)
+                variation = pos.get('variation', 0)
+                total_price = pos.get('total_price', avg_price * qty)
+                total_nmck += total_price
+
+                # Ячейки КП (цена за ед. и общая цена)
+                kp_cells = []
+                for price in prices:
+                    total = price * qty
+                    cell_text = f"<b>{price:.2f}</b>\n{total:.2f}"
+                    kp_cells.append(Paragraph(cell_text, table_cell_style))
+
+                row = [
+                    str(idx),
+                    pos.get('name', ''),
+                    pos.get('okpd', ''),
+                    str(qty),
+                    pos.get('unit', 'шт.'),
+                    kp_cells[0],
+                    kp_cells[1],
+                    kp_cells[2],
+                    f"{avg_price:.2f}",
+                    f"{variation:.2f}",
+                    f"{total_price:.2f}"
+                ]
+                table_data.append(row)
+
+            # Итоговая строка
+            table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
+
+            # Ширина колонок
+            col_widths = [
+                0.6*cm,   # №
+                4.0*cm,   # Наименование
+                2.5*cm,   # ОКПД2
+                1.2*cm,   # Кол-во
+                1.2*cm,   # Ед.изм.
+                2.0*cm,   # КП1
+                2.0*cm,   # КП2
+                2.0*cm,   # КП3
+                1.8*cm,   # Средняя
+                1.8*cm,   # Вариация
+                1.8*cm    # Итого
+            ]
+
+            table = Table(table_data, colWidths=col_widths, repeatRows=2)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+                ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
+                ('FONTSIZE', (0, -1), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ('ALIGN', (1, 2), (1, -2), 'LEFT'),  # Наименование выравниваем влево
+                ('SPAN', (0, 0), (0, 1)),  # № п/п
+                ('SPAN', (1, 0), (1, 1)),  # Наименование
+                ('SPAN', (2, 0), (2, 1)),  # ОКПД2
+                ('SPAN', (3, 0), (3, 1)),  # Кол-во
+                ('SPAN', (4, 0), (4, 1)),  # Ед.изм.
+                ('SPAN', (8, 0), (8, 1)),  # Средняя
+                ('SPAN', (9, 0), (9, 1)),  # Вариация
+                ('SPAN', (10, 0), (10, 1)), # Итого
+                ('BACKGROUND', (0, 1), (-1, 1), colors.lightgrey),
+                ('FONTSIZE', (0, 1), (-1, 1), 7),
+                ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 12))
+
+        # Примечание (в зависимости от метода)
+        method = data.get('method', 'average')
+        story.append(Spacer(1, 20))
+        if method == 'minimum':
+            note_text = (
+                "Расчет начальной (максимальной) цены контракта производится по минимальному ценовому предложению "
+                "в соответствии с письмом Минфина России от 08.09.2017 № 24-01-09/58179 «Об определении и обосновании НМЦК "
+                "методом сопоставимых рыночных цен» и частью 2 статьи 72 Бюджетного кодекса Российской Федерации."
+            )
+        else:
+            note_text = (
+                "Для определения однородности совокупности значений средняя цена за единицу товара рассчитана по формуле "
+                "Цед.ср. = (∑ni=1 Цi.)/n в соответствии с Приказом МЭР РФ от 02.10.2013 № 567, где:\n"
+                "Цед.ср. – средняя цена за единицу товара;\n"
+                "n – количество значений, используемых в расчете;\n"
+                "i – номер источника ценовой информации;\n"
+                "Цi – цена единицы товара."
+            )
+        note_text = note_text.replace('\n', '<br/>')
+        story.append(Paragraph(note_text, normal_style))
+
+        # Решение
+        story.append(Spacer(1, 30))
+        total_word = data.get('total_nmck_word', '')
+        total_num = data.get('total_nmck', 0)
+        story.append(Paragraph(
+            f"<b>Решение:</b> Признать начальной (максимальной) ценой контракта <b>{total_word}</b> "
+            f"({total_num:,.2f}) рублей 00 копеек",
+            normal_style
+        ))
+
+        # Подпись
+        story.append(Spacer(1, 40))
+        story.append(Paragraph("_________________ / _________________ /", normal_style))
+        story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
+
+        doc.build(story)
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+        return pdf_bytes
+
+
+# ============================================================
+# ОСТАЛЬНЫЕ ФУНКЦИИ (prepare_pdf_data, generate_terms_pdf)
+# ============================================================
+
+def prepare_pdf_data(
+    procurement: Dict[str, Any],
+    suppliers: List[Dict[str, Any]],
+    timeline: List[Dict[str, Any]] = None,
+    company_name: str = "ООО «Ваша компания»",
+    responsible_person: str = "Иванов И.И.",
+    positions: List[Dict] = None,
+    method: str = "average"
+) -> Dict[str, Any]:
+    if positions is None:
+        positions = []
+    formatted_positions = []
+    for pos in positions:
+        prices = pos.get('prices', [0, 0, 0])
+        while len(prices) < 3:
+            prices.append(0)
+        prices = prices[:3]
+        avg_price = pos.get('avg_price', sum(prices) / len(prices) if prices else 0)
+        variation = pos.get('variation', 0)
+        total_price = pos.get('total_price', avg_price * pos.get('quantity', 1))
+        formatted_positions.append({
+            "name": pos.get('name', ''),
+            "okpd": pos.get('okpd', ''),
+            "quantity": pos.get('quantity', 1),
+            "unit": pos.get('unit', 'шт.'),
+            "prices": prices,
+            "kp_numbers": pos.get('kp_numbers', ['', '', '']),
+            "kp_dates": pos.get('kp_dates', ['', '', '']),
+            "avg_price": avg_price,
+            "variation": variation,
+            "total_price": total_price
+        })
+    total_nmck = sum(p['total_price'] for p in formatted_positions)
+    return {
+        "procurement": {
+            "title": procurement.get('title', 'Закупка'),
+            "law_type": procurement.get('law_type', '44-ФЗ'),
+            "nmck": procurement.get('nmck', total_nmck),
+            "company_name": company_name,
+            "responsible_person": responsible_person,
+            "created_date": datetime.now().strftime("%d.%m.%Y")
+        },
+        "suppliers": suppliers,
+        "positions": formatted_positions,
+        "total_nmck": total_nmck,
+        "total_nmck_word": number_to_words_rubles(total_nmck),
+        "method": method,
+        "timeline": timeline or []
+    }
+
+
 def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", responsible_person=""):
+    """Генерация PDF для календарного плана (упрощённо, без изменений)"""
     try:
         import io
         from reportlab.lib.pagesizes import A4
@@ -148,292 +424,3 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
         import traceback
         traceback.print_exc()
         return None
-
-
-# ============================================================
-# ГЕНЕРАЦИЯ PDF ДЛЯ НМЦК (ОДНА ОБЩАЯ ТАБЛИЦА)
-# ============================================================
-
-class PDFGenerator:
-    def __init__(self):
-        pass
-
-    def generate(self, data: Dict[str, Any]) -> bytes:
-        import io
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=A4,
-            rightMargin=72,
-            leftMargin=72,
-            topMargin=72,
-            bottomMargin=72
-        )
-        styles = getSampleStyleSheet()
-        story = []
-
-        # Стили
-        title_style = ParagraphStyle(
-            'TitleStyle',
-            parent=styles['Heading1'],
-            fontSize=16,
-            alignment=1,
-            spaceAfter=20,
-            fontName=FONT_NAME
-        )
-        normal_style = ParagraphStyle(
-            'NormalStyle',
-            parent=styles['Normal'],
-            fontName=FONT_NAME,
-            fontSize=11
-        )
-        table_cell_style = ParagraphStyle(
-            'TableCellStyle',
-            parent=styles['Normal'],
-            fontName=FONT_NAME,
-            fontSize=8,
-            alignment=1,
-            leading=10
-        )
-        table_cell_left_style = ParagraphStyle(
-            'TableCellLeftStyle',
-            parent=table_cell_style,
-            alignment=0
-        )
-
-        # Заголовок
-        story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
-        story.append(Spacer(1, 12))
-
-        # Информация о закупке
-        procurement = data.get('procurement', {})
-        info_data = [
-            ("Наименование заказчика:", procurement.get('company_name', 'ООО «Ваша компания»')),
-            ("Ответственное лицо:", procurement.get('responsible_person', 'Иванов И.И.')),
-            ("Закон:", procurement.get('law_type', '44-ФЗ')),
-            ("Дата формирования:", procurement.get('created_date', datetime.now().strftime('%d.%m.%Y')))
-        ]
-        for label, value in info_data:
-            story.append(Paragraph(f"<b>{label}</b> {value}", normal_style))
-        story.append(Spacer(1, 12))
-
-        # Таблица позиций (одна общая)
-        positions = data.get('positions', [])
-        if not positions:
-            story.append(Paragraph("Нет данных для отображения", normal_style))
-        else:
-            # Реквизиты КП (берём из первой позиции, предполагаем одинаковые)
-            kp_numbers = positions[0].get('kp_numbers', ['', '', ''])
-            kp_dates = positions[0].get('kp_dates', ['', '', ''])
-            
-            # Подписи для КП
-            kp_labels = []
-            for i in range(3):
-                label = f"КП{i+1}"
-                if kp_dates[i] and kp_numbers[i]:
-                    label += f"\nот {kp_dates[i]}\nВх. № {kp_numbers[i]}"
-                elif kp_dates[i]:
-                    label += f"\nот {kp_dates[i]}"
-                elif kp_numbers[i]:
-                    label += f"\nВх. № {kp_numbers[i]}"
-                kp_labels.append(label)
-
-            # Заголовок таблицы (первая строка)
-            header_row = [
-                "№ п/п",
-                "Наименование позиции",
-                "ОКПД2/КТРУ",
-                "Кол-во",
-                "Ед. изм.",
-                kp_labels[0],
-                kp_labels[1],
-                kp_labels[2],
-                "Средняя цена за ед. (руб.)",
-                "Коэф. вариации (%)",
-                "Итого (руб.)"
-            ]
-            # Вторая строка — подзаголовки для КП
-            sub_header_row = [
-                "", "", "", "", "",
-                "Цена за ед.\nОбщая цена",
-                "Цена за ед.\nОбщая цена",
-                "Цена за ед.\nОбщая цена",
-                "", "", ""
-            ]
-
-            table_data = [header_row, sub_header_row]
-
-            # Строки позиций
-            total_nmck = 0
-            for idx, pos in enumerate(positions, 1):
-                prices = pos.get('prices', [0,0,0])
-                qty = pos.get('quantity', 1)
-                avg_price = pos.get('avg_price', 0)
-                variation = pos.get('variation', 0)
-                total_price = pos.get('total_price', 0)
-                total_nmck += total_price
-
-                # Ячейки КП (цена за ед. + общая цена)
-                kp_cells = []
-                for price in prices:
-                    total = price * qty
-                    cell_text = f"<b>{price:.2f}</b>\n{total:.2f}"
-                    kp_cells.append(Paragraph(cell_text, table_cell_style))
-
-                row = [
-                    str(idx),
-                    pos.get('name', ''),
-                    pos.get('okpd', ''),
-                    str(qty),
-                    pos.get('unit', 'шт.'),
-                    kp_cells[0],
-                    kp_cells[1],
-                    kp_cells[2],
-                    f"{avg_price:.2f}",
-                    f"{variation:.2f}",
-                    f"{total_price:.2f}"
-                ]
-                table_data.append(row)
-
-            # Итоговая строка
-            table_data.append(["", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"])
-
-            # Ширина колонок
-            col_widths = [
-                0.6*cm,   # №
-                4.0*cm,   # Наименование
-                2.5*cm,   # ОКПД2
-                1.2*cm,   # Кол-во
-                1.2*cm,   # Ед.изм.
-                2.0*cm,   # КП1
-                2.0*cm,   # КП2
-                2.0*cm,   # КП3
-                1.8*cm,   # Средняя
-                1.8*cm,   # Вариация
-                1.8*cm    # Итого
-            ]
-
-            table = Table(table_data, colWidths=col_widths, repeatRows=2)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
-                ('FONTSIZE', (0, 0), (-1, 0), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
-                ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
-                ('FONTSIZE', (0, -1), (-1, -1), 8),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ('ALIGN', (1, 2), (1, -2), 'LEFT'),  # Наименование выравниваем влево
-                ('SPAN', (0, 0), (0, 1)),  # № п/п
-                ('SPAN', (1, 0), (1, 1)),  # Наименование
-                ('SPAN', (2, 0), (2, 1)),  # ОКПД2
-                ('SPAN', (3, 0), (3, 1)),  # Кол-во
-                ('SPAN', (4, 0), (4, 1)),  # Ед.изм.
-                ('SPAN', (8, 0), (8, 1)),  # Средняя
-                ('SPAN', (9, 0), (9, 1)),  # Вариация
-                ('SPAN', (10, 0), (10, 1)), # Итого
-                ('BACKGROUND', (0, 1), (-1, 1), colors.lightgrey),
-                ('FONTSIZE', (0, 1), (-1, 1), 7),
-                ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
-            ]))
-            story.append(table)
-            story.append(Spacer(1, 12))
-
-        # Примечание
-        method = data.get('method', 'average')
-        story.append(Spacer(1, 20))
-        if method == 'minimum':
-            note_text = (
-                "Расчет начальной (максимальной) цены контракта производится по минимальному ценовому предложению "
-                "в соответствии с письмом Минфина России от 08.09.2017 № 24-01-09/58179 «Об определении и обосновании НМЦК "
-                "методом сопоставимых рыночных цен» и частью 2 статьи 72 Бюджетного кодекса Российской Федерации."
-            )
-        else:
-            note_text = (
-                "Для определения однородности совокупности значений средняя цена за единицу товара рассчитана по формуле "
-                "Цед.ср. = (∑ni=1 Цi.)/n в соответствии с Приказом МЭР РФ от 02.10.2013 № 567, где:\n"
-                "Цед.ср. – средняя цена за единицу товара;\n"
-                "n – количество значений, используемых в расчете;\n"
-                "i – номер источника ценовой информации;\n"
-                "Цi – цена единицы товара."
-            )
-        note_text = note_text.replace('\n', '<br/>')
-        story.append(Paragraph(note_text, normal_style))
-
-        # Решение
-        story.append(Spacer(1, 30))
-        total_word = data.get('total_nmck_word', '')
-        total_num = data.get('total_nmck', 0)
-        story.append(Paragraph(
-            f"<b>Решение:</b> Признать начальной (максимальной) ценой контракта <b>{total_word}</b> "
-            f"({total_num:,.2f}) рублей 00 копеек",
-            normal_style
-        ))
-
-        # Подпись
-        story.append(Spacer(1, 40))
-        story.append(Paragraph("_________________ / _________________ /", normal_style))
-        story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
-
-        doc.build(story)
-        pdf_bytes = buffer.getvalue()
-        buffer.close()
-        return pdf_bytes
-
-
-# ============================================================
-# ПОДГОТОВКА ДАННЫХ ДЛЯ PDF
-# ============================================================
-
-def prepare_pdf_data(
-    procurement: Dict[str, Any],
-    suppliers: List[Dict[str, Any]],
-    timeline: List[Dict[str, Any]] = None,
-    company_name: str = "ООО «Ваша компания»",
-    responsible_person: str = "Иванов И.И.",
-    positions: List[Dict] = None,
-    method: str = "average"
-) -> Dict[str, Any]:
-    if positions is None:
-        positions = []
-    formatted_positions = []
-    for pos in positions:
-        prices = pos.get('prices', [0, 0, 0])
-        while len(prices) < 3:
-            prices.append(0)
-        prices = prices[:3]
-        avg_price = pos.get('avg_price', 0)
-        variation = pos.get('variation', 0)
-        total_price = pos.get('total_price', 0)
-        formatted_positions.append({
-            "name": pos.get('name', ''),
-            "okpd": pos.get('okpd', ''),
-            "quantity": pos.get('quantity', 1),
-            "unit": pos.get('unit', 'шт.'),
-            "prices": prices,
-            "kp_numbers": pos.get('kp_numbers', ['', '', '']),
-            "kp_dates": pos.get('kp_dates', ['', '', '']),
-            "avg_price": avg_price,
-            "variation": variation,
-            "total_price": total_price
-        })
-    total_nmck = sum(p['total_price'] for p in formatted_positions)
-    return {
-        "procurement": {
-            "title": procurement.get('title', 'Закупка'),
-            "law_type": procurement.get('law_type', '44-ФЗ'),
-            "nmck": procurement.get('nmck', total_nmck),
-            "company_name": company_name,
-            "responsible_person": responsible_person,
-            "created_date": datetime.now().strftime("%d.%m.%Y")
-        },
-        "suppliers": suppliers,
-        "positions": formatted_positions,
-        "total_nmck": total_nmck,
-        "total_nmck_word": number_to_words_rubles(total_nmck),
-        "method": method,
-        "timeline": timeline or []
-    }
