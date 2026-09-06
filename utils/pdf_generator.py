@@ -10,6 +10,7 @@ from reportlab.lib.units import inch, cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import locale
+import re
 
 try:
     locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
@@ -19,7 +20,6 @@ except:
     except:
         pass
 
-# Регистрируем шрифт для кириллицы
 FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'fonts')
 FONT_FILE = os.path.join(FONT_DIR, 'DejaVuSans.ttf')
 if os.path.exists(FONT_FILE):
@@ -30,10 +30,6 @@ else:
 
 
 def rubles_to_words(n: int) -> str:
-    """
-    Преобразует целое число рублей в пропись с правильным склонением.
-    Например: 271065 -> "двести семьдесят одна тысяча шестьдесят пять"
-    """
     if n == 0:
         return "ноль"
 
@@ -108,6 +104,16 @@ def format_date(d) -> str:
     return d.strftime("%d.%m.%Y")
 
 
+def format_number_with_spaces(x: float) -> str:
+    """Форматирует число с пробелами как разделителями тысяч."""
+    s = f"{x:,.2f}"
+    parts = s.split('.')
+    integer_part = parts[0].replace(',', ' ')
+    if len(parts) == 2:
+        return f"{integer_part}.{parts[1]}"
+    return integer_part
+
+
 class PDFGenerator:
     def __init__(self):
         pass
@@ -115,7 +121,6 @@ class PDFGenerator:
     def generate(self, data: Dict[str, Any]) -> bytes:
         import io
         buffer = io.BytesIO()
-        # Горизонтальная ориентация
         doc = SimpleDocTemplate(
             buffer,
             pagesize=landscape(A4),
@@ -127,7 +132,6 @@ class PDFGenerator:
         styles = getSampleStyleSheet()
         story = []
 
-        # Стили
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
@@ -142,21 +146,20 @@ class PDFGenerator:
             fontName=FONT_NAME,
             fontSize=11
         )
-        table_cell_style = ParagraphStyle(
-            'TableCellStyle',
+        cell_style = ParagraphStyle(
+            'CellStyle',
             parent=styles['Normal'],
             fontName=FONT_NAME,
             fontSize=8,
             alignment=1,
             leading=10
         )
-        table_cell_left_style = ParagraphStyle(
-            'TableCellLeftStyle',
-            parent=table_cell_style,
+        cell_left_style = ParagraphStyle(
+            'CellLeftStyle',
+            parent=cell_style,
             alignment=0
         )
 
-        # Заголовок
         story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
         story.append(Spacer(1, 12))
 
@@ -164,45 +167,40 @@ class PDFGenerator:
         if not positions:
             story.append(Paragraph("Нет данных для отображения", normal_style))
         else:
-            # Реквизиты КП из первой позиции
             kp_numbers = positions[0].get('kp_numbers', ['', '', ''])
             kp_dates = positions[0].get('kp_dates', ['', '', ''])
 
-            # Заголовки КП с переносами
             kp_headers = []
             for i in range(3):
                 label = "Коммерческое предложение"
                 if kp_dates[i] and kp_numbers[i]:
-                    label += f"\nот {kp_dates[i]} Вх. № {kp_numbers[i]}"
+                    label += f"<br/>от {kp_dates[i]} Вх. № {kp_numbers[i]}"
                 elif kp_dates[i]:
-                    label += f"\nот {kp_dates[i]}"
+                    label += f"<br/>от {kp_dates[i]}"
                 elif kp_numbers[i]:
-                    label += f"\nВх. № {kp_numbers[i]}"
+                    label += f"<br/>Вх. № {kp_numbers[i]}"
                 kp_headers.append(label)
 
-            # Первая строка заголовка
             first_row = [
                 "№ п/п",
                 "Наименование позиции",
                 "ОКПД2/КТРУ",
                 "Кол-во",
                 "Ед. изм.",
-                kp_headers[0], "",  # две колонки для КП1
-                kp_headers[1], "",  # две колонки для КП2
-                kp_headers[2], "",  # две колонки для КП3
-                "Средняя цена\nза ед. (руб.)",
-                "Коэф.\nвариации (%)",
+                Paragraph(kp_headers[0], cell_style), "",
+                Paragraph(kp_headers[1], cell_style), "",
+                Paragraph(kp_headers[2], cell_style), "",
+                "Средняя цена<br/>за ед. (руб.)",
+                "Коэф.<br/>вариации (%)",
                 "Итого (руб.)"
             ]
-
-            # Вторая строка — подзаголовки для КП
             second_row = [
                 "", "", "", "", "",
-                "Цена за ед.\nизм.",
+                "Цена за ед.<br/>изм.",
                 "Цена",
-                "Цена за ед.\nизм.",
+                "Цена за ед.<br/>изм.",
                 "Цена",
-                "Цена за ед.\nизм.",
+                "Цена за ед.<br/>изм.",
                 "Цена",
                 "", "", ""
             ]
@@ -234,26 +232,13 @@ class PDFGenerator:
                 row.append(f"{total_price:.2f}")
                 table_data.append(row)
 
-            # Итоговая строка
             total_row = ["", "", "", "", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"]
             table_data.append(total_row)
 
-            # Ширина колонок
             col_widths = [
-                0.8*cm,   # №
-                4.5*cm,   # Наименование
-                2.8*cm,   # ОКПД2
-                1.2*cm,   # Кол-во
-                1.2*cm,   # Ед.изм.
-                1.8*cm,   # КП1 цена за ед.
-                1.8*cm,   # КП1 общая цена
-                1.8*cm,   # КП2 цена за ед.
-                1.8*cm,   # КП2 общая цена
-                1.8*cm,   # КП3 цена за ед.
-                1.8*cm,   # КП3 общая цена
-                1.8*cm,   # Средняя
-                1.8*cm,   # Вариация
-                1.8*cm    # Итого
+                0.8*cm, 4.5*cm, 2.8*cm, 1.2*cm, 1.2*cm,
+                1.8*cm, 1.8*cm, 1.8*cm, 1.8*cm, 1.8*cm, 1.8*cm,
+                1.8*cm, 1.8*cm, 1.8*cm
             ]
 
             table = Table(table_data, colWidths=col_widths, repeatRows=2)
@@ -270,9 +255,9 @@ class PDFGenerator:
                 ('FONTSIZE', (0, -1), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
                 ('ALIGN', (1, 2), (1, -2), 'LEFT'),
-                ('SPAN', (5, 0), (6, 0)),  # КП1
-                ('SPAN', (7, 0), (8, 0)),  # КП2
-                ('SPAN', (9, 0), (10, 0)), # КП3
+                ('SPAN', (5, 0), (6, 0)),
+                ('SPAN', (7, 0), (8, 0)),
+                ('SPAN', (9, 0), (10, 0)),
                 ('BACKGROUND', (0, 1), (-1, 1), colors.lightgrey),
                 ('FONTSIZE', (0, 1), (-1, 1), 7),
                 ('BOTTOMPADDING', (0, 1), (-1, 1), 4),
@@ -280,7 +265,6 @@ class PDFGenerator:
             story.append(table)
             story.append(Spacer(1, 12))
 
-        # Примечание
         method = data.get('method', 'average')
         story.append(Spacer(1, 20))
         if method == 'minimum':
@@ -292,13 +276,12 @@ class PDFGenerator:
         else:
             note_text = (
                 "Для определения однородности совокупности значений средняя цена за единицу товара рассчитана по формуле "
-                "Цед.ср. = (∑ni=1 Цi.)/n в соответствии с Приказом МЭР РФ от 02.10.2013 № 567, где:\n"
-                "Цед.ср. – средняя цена за единицу товара;\n"
-                "n – количество значений, используемых в расчете;\n"
-                "i – номер источника ценовой информации;\n"
+                "Цед.ср. = (∑ni=1 Цi.)/n в соответствии с Приказом МЭР РФ от 02.10.2013 № 567, где:<br/>"
+                "Цед.ср. – средняя цена за единицу товара;<br/>"
+                "n – количество значений, используемых в расчете;<br/>"
+                "i – номер источника ценовой информации;<br/>"
                 "Цi – цена единицы товара."
             )
-        note_text = note_text.replace('\n', '<br/>')
         story.append(Paragraph(note_text, normal_style))
 
         # Решение
@@ -307,15 +290,20 @@ class PDFGenerator:
         rubles = int(total_num)
         kopecks = int(round((total_num - rubles) * 100))
         rubles_word = rubles_to_words(rubles)
-        # Форматируем сумму с пробелом (не запятой)
-        total_num_formatted = f"{total_num:,.2f}".replace(',', ' ')
+        # Склонение копеек
+        if kopecks % 10 == 1 and kopecks % 100 != 11:
+            kopecks_word = "копейка"
+        elif 2 <= kopecks % 10 <= 4 and (kopecks % 100 < 10 or kopecks % 100 >= 20):
+            kopecks_word = "копейки"
+        else:
+            kopecks_word = "копеек"
+        formatted_total = format_number_with_spaces(total_num)
         solution_text = (
             f"<b>Решение:</b> Признать начальной (максимальной) ценой контракта "
-            f"{total_num_formatted} ({rubles_word}) рублей {kopecks:02d} копеек"
+            f"{formatted_total} ({rubles_word}) рублей {kopecks:02d} {kopecks_word}"
         )
         story.append(Paragraph(solution_text, normal_style))
 
-        # Подпись
         story.append(Spacer(1, 40))
         story.append(Paragraph("_________________ / _________________ /", normal_style))
         story.append(Paragraph("«___» ___________ 2026 г.", normal_style))
@@ -325,10 +313,6 @@ class PDFGenerator:
         buffer.close()
         return pdf_bytes
 
-
-# ============================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ============================================================
 
 def prepare_pdf_data(
     procurement: Dict[str, Any],
@@ -381,7 +365,6 @@ def prepare_pdf_data(
 
 
 def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", responsible_person=""):
-    """Генерация PDF для календарного плана"""
     try:
         import io
         from reportlab.lib.pagesizes import A4
