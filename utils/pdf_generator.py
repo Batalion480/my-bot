@@ -151,6 +151,34 @@ class PDFGenerator:
         styles = getSampleStyleSheet()
         story = []
 
+        # Создаём стиль для ячеек с поддержкой кириллицы
+        cell_style = ParagraphStyle(
+            'CellStyle',
+            parent=styles['Normal'],
+            fontName=FONT_NAME,
+            fontSize=8,
+            alignment=1,  # center
+            leading=10,
+            wordWrap='CJK'
+        )
+        cell_left_style = ParagraphStyle(
+            'CellLeftStyle',
+            parent=cell_style,
+            alignment=0  # left
+        )
+
+        # Стиль для заголовков таблицы
+        header_style = ParagraphStyle(
+            'HeaderStyle',
+            parent=cell_style,
+            fontName=FONT_NAME,
+            fontSize=8,
+            alignment=1,
+            leading=10,
+            textColor=colors.whitesmoke,
+            backColor=colors.grey
+        )
+
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
@@ -164,20 +192,6 @@ class PDFGenerator:
             parent=styles['Normal'],
             fontName=FONT_NAME,
             fontSize=11
-        )
-        cell_style = ParagraphStyle(
-            'CellStyle',
-            parent=styles['Normal'],
-            fontName=FONT_NAME,
-            fontSize=8,
-            alignment=1,
-            leading=10,
-            wordWrap='CJK'  # для переноса длинных слов
-        )
-        cell_left_style = ParagraphStyle(
-            'CellLeftStyle',
-            parent=cell_style,
-            alignment=0
         )
 
         story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
@@ -200,31 +214,31 @@ class PDFGenerator:
                     label += f"<br/>от {kp_dates[i]}"
                 elif kp_numbers[i]:
                     label += f"<br/>Вх. № {kp_numbers[i]}"
-                kp_headers.append(Paragraph(label, cell_style))
+                kp_headers.append(Paragraph(label, header_style))
 
             # Первая строка заголовка
             first_row = [
-                "№ п/п",
-                "Наименование позиции",
-                "ОКПД2/КТРУ",
-                "Кол-во",
-                "Ед. изм.",
+                Paragraph("№ п/п", header_style),
+                Paragraph("Наименование позиции", header_style),
+                Paragraph("ОКПД2/КТРУ", header_style),
+                Paragraph("Кол-во", header_style),
+                Paragraph("Ед. изм.", header_style),
                 kp_headers[0], "",
                 kp_headers[1], "",
                 kp_headers[2], "",
-                Paragraph("Средняя цена<br/>за ед. (руб.)", cell_style),
-                Paragraph("Коэф.<br/>вариации (%)", cell_style),
-                Paragraph("Итого (руб.)", cell_style)
+                Paragraph("Средняя цена<br/>за ед. (руб.)", header_style),
+                Paragraph("Коэф.<br/>вариации (%)", header_style),
+                Paragraph("Итого (руб.)", header_style)
             ]
             # Вторая строка — подзаголовки для КП
             second_row = [
                 "", "", "", "", "",
-                Paragraph("Цена за ед.<br/>изм.", cell_style),
-                Paragraph("Цена", cell_style),
-                Paragraph("Цена за ед.<br/>изм.", cell_style),
-                Paragraph("Цена", cell_style),
-                Paragraph("Цена за ед.<br/>изм.", cell_style),
-                Paragraph("Цена", cell_style),
+                Paragraph("Цена за ед.<br/>изм.", header_style),
+                Paragraph("Цена", header_style),
+                Paragraph("Цена за ед.<br/>изм.", header_style),
+                Paragraph("Цена", header_style),
+                Paragraph("Цена за ед.<br/>изм.", header_style),
+                Paragraph("Цена", header_style),
                 "", "", ""
             ]
 
@@ -239,23 +253,30 @@ class PDFGenerator:
                 total_price = pos.get('total_price', avg_price * qty)
                 total_nmck += total_price
 
+                # Все данные оборачиваем в Paragraph с cell_style или cell_left_style
                 row = [
-                    str(idx),
-                    pos.get('name', ''),
-                    pos.get('okpd', ''),
-                    str(qty),
-                    pos.get('unit', 'шт.'),
+                    Paragraph(str(idx), cell_style),
+                    Paragraph(pos.get('name', ''), cell_left_style),
+                    Paragraph(pos.get('okpd', ''), cell_style),
+                    Paragraph(str(qty), cell_style),
+                    Paragraph(pos.get('unit', 'шт.'), cell_style),
                 ]
                 for price in prices:
                     total = price * qty
-                    row.append(f"{price:.2f}")
-                    row.append(f"{total:.2f}")
-                row.append(f"{avg_price:.2f}")
-                row.append(f"{variation:.2f}")
-                row.append(f"{total_price:.2f}")
+                    row.append(Paragraph(f"{price:.2f}", cell_style))
+                    row.append(Paragraph(f"{total:.2f}", cell_style))
+                row.append(Paragraph(f"{avg_price:.2f}", cell_style))
+                row.append(Paragraph(f"{variation:.2f}", cell_style))
+                row.append(Paragraph(f"{total_price:.2f}", cell_style))
                 table_data.append(row)
 
-            total_row = ["", "", "", "", "", "", "", "", "", "", "", "", "ИТОГО:", f"{total_nmck:.2f}"]
+            total_row = [
+                "", "", "", "", "",
+                "", "", "", "", "", "",
+                "", 
+                Paragraph("ИТОГО:", cell_style), 
+                Paragraph(f"{total_nmck:.2f}", cell_style)
+            ]
             table_data.append(total_row)
 
             col_widths = [
@@ -270,12 +291,10 @@ class PDFGenerator:
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
-                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
                 ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
-                ('FONTNAME', (0, -1), (-1, -1), FONT_NAME),
-                ('FONTSIZE', (0, -1), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
                 ('ALIGN', (1, 2), (1, -2), 'LEFT'),
                 ('SPAN', (5, 0), (6, 0)),
@@ -453,11 +472,9 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, 0), FONT_NAME),
-            ('FONTSIZE', (0, 0), (-1, 0), 11),
+            ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
+            ('FONTSIZE', (0, 0), (-1, -1), 11),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('FONTNAME', (0, 1), (-1, -1), FONT_NAME),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
         ]))
         story.append(table)
