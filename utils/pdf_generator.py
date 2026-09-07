@@ -19,36 +19,30 @@ except:
     except:
         pass
 
-# Определяем путь к шрифту
+# Путь к шрифту в контейнере Amvera
 FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'fonts')
 FONT_FILE = os.path.join(FONT_DIR, 'DejaVuSans.ttf')
-if os.path.exists(FONT_FILE):
-    pdfmetrics.registerFont(TTFont('DejaVuSans', FONT_FILE))
-    FONT_NAME = 'DejaVuSans'
-    print("✅ Шрифт DejaVuSans загружен")
-else:
-    # Fallback: используем стандартный шрифт, который поддерживает кириллицу через cp1251
-    # Для этого регистрируем шрифт Helvetica с кодировкой cp1251
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase import _fontdata
-    pdfmetrics.registerFont(_fontdata.StandardFont('Helvetica', encoding='cp1251'))
-    FONT_NAME = 'Helvetica'
-    print("⚠️ Шрифт DejaVuSans не найден, используется Helvetica с cp1251")
+# Альтернативный путь (если первый не работает)
+if not os.path.exists(FONT_FILE):
+    FONT_FILE = '/app/static/fonts/DejaVuSans.ttf'
 
-# Для Helvetica с кириллицей нужно указать кодировку в стилях
-def get_paragraph_style(font_name, size, alignment=0, leading=None):
-    return ParagraphStyle(
-        'CustomStyle',
-        fontName=font_name,
-        fontSize=size,
-        alignment=alignment,
-        leading=leading or size * 1.2,
-        encoding='cp1251'  # важно для кириллицы
-    )
+if os.path.exists(FONT_FILE):
+    try:
+        pdfmetrics.registerFont(TTFont('DejaVuSans', FONT_FILE))
+        FONT_NAME = 'DejaVuSans'
+        print(f"✅ Шрифт загружен: {FONT_FILE}")
+    except Exception as e:
+        print(f"⚠️ Ошибка загрузки шрифта: {e}")
+        FONT_NAME = 'Helvetica'
+else:
+    print(f"⚠️ Файл шрифта не найден: {FONT_FILE}")
+    FONT_NAME = 'Helvetica'
+
 
 def rubles_to_words(n: int) -> str:
     if n == 0:
         return "ноль"
+
     units = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
     units_feminine = ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
     teens = ["десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать",
@@ -157,22 +151,19 @@ class PDFGenerator:
         styles = getSampleStyleSheet()
         story = []
 
-        # Стили с явной кодировкой cp1251 для кириллицы
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
-            fontName=FONT_NAME,
             fontSize=16,
             alignment=1,
             spaceAfter=20,
-            encoding='cp1251'
+            fontName=FONT_NAME
         )
         normal_style = ParagraphStyle(
             'NormalStyle',
             parent=styles['Normal'],
             fontName=FONT_NAME,
-            fontSize=11,
-            encoding='cp1251'
+            fontSize=11
         )
         cell_style = ParagraphStyle(
             'CellStyle',
@@ -181,13 +172,12 @@ class PDFGenerator:
             fontSize=8,
             alignment=1,
             leading=10,
-            encoding='cp1251'
+            wordWrap='CJK'  # для переноса длинных слов
         )
         cell_left_style = ParagraphStyle(
             'CellLeftStyle',
             parent=cell_style,
-            alignment=0,
-            encoding='cp1251'
+            alignment=0
         )
 
         story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
@@ -200,7 +190,7 @@ class PDFGenerator:
             kp_numbers = positions[0].get('kp_numbers', ['', '', ''])
             kp_dates = positions[0].get('kp_dates', ['', '', ''])
 
-            # Заголовки КП с переносами (через <br/>)
+            # Заголовки КП с переносами
             kp_headers = []
             for i in range(3):
                 label = "Коммерческое предложение"
@@ -222,19 +212,19 @@ class PDFGenerator:
                 kp_headers[0], "",
                 kp_headers[1], "",
                 kp_headers[2], "",
-                "Средняя цена<br/>за ед. (руб.)",
-                "Коэф.<br/>вариации (%)",
-                "Итого (руб.)"
+                Paragraph("Средняя цена<br/>за ед. (руб.)", cell_style),
+                Paragraph("Коэф.<br/>вариации (%)", cell_style),
+                Paragraph("Итого (руб.)", cell_style)
             ]
             # Вторая строка — подзаголовки для КП
             second_row = [
                 "", "", "", "", "",
-                "Цена за ед.<br/>изм.",
-                "Цена",
-                "Цена за ед.<br/>изм.",
-                "Цена",
-                "Цена за ед.<br/>изм.",
-                "Цена",
+                Paragraph("Цена за ед.<br/>изм.", cell_style),
+                Paragraph("Цена", cell_style),
+                Paragraph("Цена за ед.<br/>изм.", cell_style),
+                Paragraph("Цена", cell_style),
+                Paragraph("Цена за ед.<br/>изм.", cell_style),
+                Paragraph("Цена", cell_style),
                 "", "", ""
             ]
 
@@ -404,11 +394,11 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
         styles = getSampleStyleSheet()
         story = []
 
-        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20, fontName=FONT_NAME, encoding='cp1251')
-        heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=13, spaceAfter=8, spaceBefore=12, fontName=FONT_NAME, encoding='cp1251')
-        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=11, encoding='cp1251')
-        rule_style = ParagraphStyle('RuleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=20, spaceAfter=4, encoding='cp1251')
-        article_style = ParagraphStyle('ArticleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=40, textColor=colors.grey, spaceAfter=8, encoding='cp1251')
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20, fontName=FONT_NAME)
+        heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=13, spaceAfter=8, spaceBefore=12, fontName=FONT_NAME)
+        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=11)
+        rule_style = ParagraphStyle('RuleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=20, spaceAfter=4)
+        article_style = ParagraphStyle('ArticleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=40, textColor=colors.grey, spaceAfter=8)
 
         story.append(Paragraph("КАЛЕНДАРНЫЙ ПЛАН ЗАКУПКИ", title_style))
         story.append(Spacer(1, 12))
