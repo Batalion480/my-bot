@@ -401,13 +401,9 @@ async def generate_final_pdf(message: Message, state: FSMContext):
         for pos in positions:
             prices = pos.get('prices', [0,0,0])
             qty = pos.get('quantity', 1)
-            avg_price = sum(prices) / len(prices) if prices else 0
-            variation = 0
-            if avg_price > 0 and len(prices) >= 3:
-                variance = sum((p - avg_price) ** 2 for p in prices) / len(prices)
-                std_dev = variance ** 0.5
-                variation = (std_dev / avg_price) * 100 if avg_price > 0 else 0
-            total_price = avg_price * qty
+            avg_price = pos.get('avg_price', sum(prices) / len(prices) if prices else 0)
+            variation = pos.get('variation', 0)
+            total_price = pos.get('total_price', avg_price * qty)
             pdf_positions.append({
                 "name": pos.get('name', ''),
                 "okpd": pos.get('okpd', ''),
@@ -703,22 +699,44 @@ async def show_excel_result(message: Message, state: FSMContext, positions: List
 
 
 # ============================================================
-# ОБРАБОТЧИК КНОПКИ "НОВАЯ ЗАКУПКА" (из главного меню)
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ "НОВАЯ ЗАКУПКА" — БЕЗ ПОВТОРНОГО ВЫБОРА ЗАКОНА
 # ============================================================
 
 @router.callback_query(lambda c: c.data == "new_procurement")
 async def new_procurement(callback: CallbackQuery, state: FSMContext):
+    """Начало расчёта НМЦК с использованием сохранённого закона"""
     await callback.answer()
-    await state.clear()
-    await callback.message.edit_text(
-        "🔄 Начинаем новую закупку.\n"
-        "Выберите закон:",
-        reply_markup=InlineKeyboardBuilder().button(
-            text="🔵 44-ФЗ", callback_data="law_44"
-        ).button(
-            text="🟢 223-ФЗ", callback_data="law_223"
-        ).adjust(1).as_markup()
-    )
+    data = await state.get_data()
+    law_type = data.get("law_type")
+
+    if law_type:
+        # Закон уже выбран — сразу переходим к выбору позиций
+        await state.update_data(law_type=law_type)
+        await state.set_state(NMCKStates.waiting_for_position_count)
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="1 позиция", callback_data="pos_1")
+        builder.button(text="Много позиций", callback_data="pos_many")
+        builder.button(text="🔙 Назад", callback_data="back_to_menu")
+        builder.adjust(2, 1)
+
+        await callback.message.edit_text(
+            f"⚖️ Выбран закон: {law_type}-ФЗ\n\n"
+            "Сколько позиций в коммерческом предложении?",
+            reply_markup=builder.as_markup()
+        )
+    else:
+        # Если закон не сохранён (редкий случай), запрашиваем
+        await state.clear()
+        await callback.message.edit_text(
+            "🔄 Начинаем новую закупку.\n"
+            "Выберите закон:",
+            reply_markup=InlineKeyboardBuilder().button(
+                text="🔵 44-ФЗ", callback_data="law_44"
+            ).button(
+                text="🟢 223-ФЗ", callback_data="law_223"
+            ).adjust(1).as_markup()
+        )
 
 
 # ============================================================
