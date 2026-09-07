@@ -28,6 +28,21 @@ async def main():
     await db.connect()
     logger.info("✅ База данных подключена")
 
+    # ============================================================
+    # АВТОМАТИЧЕСКОЕ ЗАПОЛНЕНИЕ БАЗЫ ЗНАНИЙ (если пуста)
+    # ============================================================
+    rules = await db.get_all_rules()
+    if not rules:
+        logger.info("📚 База знаний пуста, запускаем загрузку...")
+        try:
+            from utils.knowledge_loader import load_knowledge_base
+            await load_knowledge_base()
+            logger.info("✅ База знаний успешно загружена")
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки базы знаний: {e}")
+    else:
+        logger.info(f"✅ База знаний уже содержит {len(rules)} правил")
+
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
