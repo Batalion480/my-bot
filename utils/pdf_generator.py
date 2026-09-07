@@ -10,7 +10,6 @@ from reportlab.lib.units import inch, cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import locale
-import re
 
 try:
     locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
@@ -20,19 +19,36 @@ except:
     except:
         pass
 
+# Определяем путь к шрифту
 FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'fonts')
 FONT_FILE = os.path.join(FONT_DIR, 'DejaVuSans.ttf')
 if os.path.exists(FONT_FILE):
     pdfmetrics.registerFont(TTFont('DejaVuSans', FONT_FILE))
     FONT_NAME = 'DejaVuSans'
+    print("✅ Шрифт DejaVuSans загружен")
 else:
+    # Fallback: используем стандартный шрифт, который поддерживает кириллицу через cp1251
+    # Для этого регистрируем шрифт Helvetica с кодировкой cp1251
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase import _fontdata
+    pdfmetrics.registerFont(_fontdata.StandardFont('Helvetica', encoding='cp1251'))
     FONT_NAME = 'Helvetica'
+    print("⚠️ Шрифт DejaVuSans не найден, используется Helvetica с cp1251")
 
+# Для Helvetica с кириллицей нужно указать кодировку в стилях
+def get_paragraph_style(font_name, size, alignment=0, leading=None):
+    return ParagraphStyle(
+        'CustomStyle',
+        fontName=font_name,
+        fontSize=size,
+        alignment=alignment,
+        leading=leading or size * 1.2,
+        encoding='cp1251'  # важно для кириллицы
+    )
 
 def rubles_to_words(n: int) -> str:
     if n == 0:
         return "ноль"
-
     units = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
     units_feminine = ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
     teens = ["десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать",
@@ -105,13 +121,22 @@ def format_date(d) -> str:
 
 
 def format_number_with_spaces(x: float) -> str:
-    """Форматирует число с пробелами как разделителями тысяч."""
     s = f"{x:,.2f}"
     parts = s.split('.')
     integer_part = parts[0].replace(',', ' ')
     if len(parts) == 2:
         return f"{integer_part}.{parts[1]}"
     return integer_part
+
+
+def kopecks_case(k: int) -> str:
+    if 10 <= k % 100 <= 20:
+        return "копеек"
+    if k % 10 == 1:
+        return "копейка"
+    if 2 <= k % 10 <= 4:
+        return "копейки"
+    return "копеек"
 
 
 class PDFGenerator:
@@ -132,19 +157,22 @@ class PDFGenerator:
         styles = getSampleStyleSheet()
         story = []
 
+        # Стили с явной кодировкой cp1251 для кириллицы
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
+            fontName=FONT_NAME,
             fontSize=16,
             alignment=1,
             spaceAfter=20,
-            fontName=FONT_NAME
+            encoding='cp1251'
         )
         normal_style = ParagraphStyle(
             'NormalStyle',
             parent=styles['Normal'],
             fontName=FONT_NAME,
-            fontSize=11
+            fontSize=11,
+            encoding='cp1251'
         )
         cell_style = ParagraphStyle(
             'CellStyle',
@@ -152,12 +180,14 @@ class PDFGenerator:
             fontName=FONT_NAME,
             fontSize=8,
             alignment=1,
-            leading=10
+            leading=10,
+            encoding='cp1251'
         )
         cell_left_style = ParagraphStyle(
             'CellLeftStyle',
             parent=cell_style,
-            alignment=0
+            alignment=0,
+            encoding='cp1251'
         )
 
         story.append(Paragraph("ОБОСНОВАНИЕ НАЧАЛЬНОЙ (МАКСИМАЛЬНОЙ) ЦЕНЫ КОНТРАКТА", title_style))
@@ -170,6 +200,7 @@ class PDFGenerator:
             kp_numbers = positions[0].get('kp_numbers', ['', '', ''])
             kp_dates = positions[0].get('kp_dates', ['', '', ''])
 
+            # Заголовки КП с переносами (через <br/>)
             kp_headers = []
             for i in range(3):
                 label = "Коммерческое предложение"
@@ -179,21 +210,23 @@ class PDFGenerator:
                     label += f"<br/>от {kp_dates[i]}"
                 elif kp_numbers[i]:
                     label += f"<br/>Вх. № {kp_numbers[i]}"
-                kp_headers.append(label)
+                kp_headers.append(Paragraph(label, cell_style))
 
+            # Первая строка заголовка
             first_row = [
                 "№ п/п",
                 "Наименование позиции",
                 "ОКПД2/КТРУ",
                 "Кол-во",
                 "Ед. изм.",
-                Paragraph(kp_headers[0], cell_style), "",
-                Paragraph(kp_headers[1], cell_style), "",
-                Paragraph(kp_headers[2], cell_style), "",
+                kp_headers[0], "",
+                kp_headers[1], "",
+                kp_headers[2], "",
                 "Средняя цена<br/>за ед. (руб.)",
                 "Коэф.<br/>вариации (%)",
                 "Итого (руб.)"
             ]
+            # Вторая строка — подзаголовки для КП
             second_row = [
                 "", "", "", "", "",
                 "Цена за ед.<br/>изм.",
@@ -284,23 +317,16 @@ class PDFGenerator:
             )
         story.append(Paragraph(note_text, normal_style))
 
-        # Решение
         story.append(Spacer(1, 30))
         total_num = data.get('total_nmck', 0)
         rubles = int(total_num)
         kopecks = int(round((total_num - rubles) * 100))
         rubles_word = rubles_to_words(rubles)
-        # Склонение копеек
-        if kopecks % 10 == 1 and kopecks % 100 != 11:
-            kopecks_word = "копейка"
-        elif 2 <= kopecks % 10 <= 4 and (kopecks % 100 < 10 or kopecks % 100 >= 20):
-            kopecks_word = "копейки"
-        else:
-            kopecks_word = "копеек"
         formatted_total = format_number_with_spaces(total_num)
+        kop_word = kopecks_case(kopecks)
         solution_text = (
             f"<b>Решение:</b> Признать начальной (максимальной) ценой контракта "
-            f"{formatted_total} ({rubles_word}) рублей {kopecks:02d} {kopecks_word}"
+            f"{formatted_total} ({rubles_word}) рублей {kopecks:02d} {kop_word}"
         )
         story.append(Paragraph(solution_text, normal_style))
 
@@ -378,17 +404,17 @@ def generate_terms_pdf(dates, law_type="44-ФЗ", nmck=0, company_name="", respo
         styles = getSampleStyleSheet()
         story = []
 
-        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20, fontName=FONT_NAME)
-        heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=13, spaceAfter=8, spaceBefore=12, fontName=FONT_NAME)
-        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=11)
-        rule_style = ParagraphStyle('RuleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=20, spaceAfter=4)
-        article_style = ParagraphStyle('ArticleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=40, textColor=colors.grey, spaceAfter=8)
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, alignment=1, spaceAfter=20, fontName=FONT_NAME, encoding='cp1251')
+        heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=13, spaceAfter=8, spaceBefore=12, fontName=FONT_NAME, encoding='cp1251')
+        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=11, encoding='cp1251')
+        rule_style = ParagraphStyle('RuleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=20, spaceAfter=4, encoding='cp1251')
+        article_style = ParagraphStyle('ArticleStyle', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, leftIndent=40, textColor=colors.grey, spaceAfter=8, encoding='cp1251')
 
         story.append(Paragraph("КАЛЕНДАРНЫЙ ПЛАН ЗАКУПКИ", title_style))
         story.append(Spacer(1, 12))
 
         story.append(Paragraph(f"<b>Закон:</b> {law_type}", normal_style))
-        story.append(Paragraph(f"<b>НМЦК:</b> {nmck:,.2f} руб. ({rubles_to_words(int(nmck))} рублей {int(round((nmck-int(nmck))*100)):02d} копеек)", normal_style))
+        story.append(Paragraph(f"<b>НМЦК:</b> {nmck:,.2f} руб. ({rubles_to_words(int(nmck))} рублей {int(round((nmck-int(nmck))*100)):02d} {kopecks_case(int(round((nmck-int(nmck))*100)))})", normal_style))
         story.append(Paragraph(f"<b>Дата публикации:</b> {format_date(dates.get('publication_date'))}", normal_style))
         story.append(Paragraph(f"<b>Дата подписания:</b> {format_date(dates.get('signing_date'))}", normal_style))
         story.append(Spacer(1, 16))
