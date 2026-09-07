@@ -422,7 +422,6 @@ class Database:
     # ============================================================
 
     async def get_rule(self, law_type: str, procedure_type: str, stage: str) -> Optional[Dict]:
-        """Получает правило из базы знаний по типу закона, процедуре и этапу"""
         await self._ensure_connection()
         self.cursor.execute(
             "SELECT * FROM knowledge_base WHERE law_type = ? AND procedure_type = ? AND stage = ?",
@@ -432,7 +431,6 @@ class Database:
         return dict(row) if row else None
 
     async def get_all_rules_for_procedure(self, law_type: str, procedure_type: str) -> List[Dict]:
-        """Получает все правила для конкретной процедуры (все этапы)"""
         await self._ensure_connection()
         self.cursor.execute(
             "SELECT * FROM knowledge_base WHERE law_type = ? AND procedure_type = ? ORDER BY id",
@@ -443,7 +441,6 @@ class Database:
     async def insert_rule(self, law_type: str, procedure_type: str, stage: str,
                           article: str, rule_text: str, calculation_type: str = None,
                           source: str = None) -> int:
-        """Вставляет новое правило в базу знаний"""
         await self._ensure_connection()
         self.cursor.execute(
             """INSERT INTO knowledge_base 
@@ -456,19 +453,48 @@ class Database:
         return row["id"]
 
     async def clear_knowledge_base(self):
-        """Очищает таблицу knowledge_base (для перезаливки данных)"""
         await self._ensure_connection()
         self.cursor.execute("DELETE FROM knowledge_base")
         self.conn.commit()
 
     async def get_all_rules(self, law_type: str = None) -> List[Dict]:
-        """Получает все правила из базы знаний (можно отфильтровать по типу закона)"""
         await self._ensure_connection()
         if law_type:
             self.cursor.execute("SELECT * FROM knowledge_base WHERE law_type = ?", (law_type,))
         else:
             self.cursor.execute("SELECT * FROM knowledge_base")
         return self._rows_to_dicts(self.cursor.fetchall())
+
+    # ============================================================
+    # СТАТИСТИКА (НОВЫЕ МЕТОДЫ)
+    # ============================================================
+
+    async def get_user_count(self) -> int:
+        """Возвращает общее количество пользователей"""
+        await self._ensure_connection()
+        self.cursor.execute("SELECT COUNT(*) FROM users")
+        row = self.cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_active_users(self, days: int = 1) -> int:
+        """Возвращает количество активных пользователей за последние N дней"""
+        await self._ensure_connection()
+        self.cursor.execute(
+            "SELECT COUNT(*) FROM users WHERE last_activity >= datetime('now', ?)",
+            (f'-{days} days',)
+        )
+        row = self.cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_recent_users(self, limit: int = 10) -> List[Dict]:
+        """Возвращает последних активных пользователей"""
+        await self._ensure_connection()
+        self.cursor.execute(
+            "SELECT telegram_id, username, first_name, last_activity FROM users ORDER BY last_activity DESC LIMIT ?",
+            (limit,)
+        )
+        rows = self.cursor.fetchall()
+        return [dict(row) for row in rows]
 
     # ============================================================
     # ЗАКРЫТИЕ ПОДКЛЮЧЕНИЯ
