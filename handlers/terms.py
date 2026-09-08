@@ -60,6 +60,7 @@ def get_stage_name(stage: str) -> str:
 
 @router.callback_query(lambda c: c.data == "go_to_terms")
 async def start_terms(callback: types.CallbackQuery, state: FSMContext):
+    """Начало расчёта сроков - выбор процедуры"""
     await callback.answer()
     await state.set_state(TermsStates.waiting_for_procedure)
 
@@ -78,6 +79,7 @@ async def start_terms(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(lambda c: c.data.startswith("procedure_"))
 async def select_procedure(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор процедуры"""
     await callback.answer()
     procedure = callback.data.replace("procedure_", "")
     await state.update_data(procedure=procedure)
@@ -237,13 +239,16 @@ async def process_publication_date(message: types.Message, state: FSMContext):
     # ФОРМИРОВАНИЕ ТЕКСТА В ЗАВИСИМОСТИ ОТ ПРОЦЕДУРЫ
     # ============================================================
     if procedure == "quote":
-        # Для запроса котировок
+        # Для запроса котировок (дополнительные этапы)
         date_lines = (
-            f"📄 Публикация: {format_date(dates['publication_date'])}\n"
+            f"📄 Публикация извещения: {format_date(dates['publication_date'])}\n"
             f"📩 Окончание подачи заявок: {format_date(dates['bid_end_date'])}\n"
-            f"🔍 Рассмотрение заявок: {format_date(dates.get('review_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
-            f"📋 Публикация итогового протокола: {format_date(dates.get('protocol_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
-            f"✍️ Подписание контракта: {format_date(dates['signing_date'])}\n"
+            f"🔍 Рассмотрение заявок: {format_date(dates.get('review_date', dates['bid_end_date']))}\n"
+            f"📋 Публикация итогового протокола: {format_date(dates.get('protocol_date', dates['bid_end_date']))}\n"
+            f"📄 Размещение проекта контракта: {format_date(dates.get('contract_project_date', dates['bid_end_date']))}\n"
+            f"✍️ Подписание контракта победителем: {format_date(dates.get('winner_signing_date', dates['bid_end_date']))}\n"
+            f"✍️ Подписание контракта заказчиком: {format_date(dates.get('customer_signing_date', dates['bid_end_date']))}\n"
+            f"📅 Дата заключения контракта: {format_date(dates['signing_date'])}\n"
         )
     else:
         # Для аукциона и конкурса
@@ -251,8 +256,8 @@ async def process_publication_date(message: types.Message, state: FSMContext):
             f"📄 Публикация: {format_date(dates['publication_date'])}\n"
             f"📩 Окончание подачи: {format_date(dates['bid_end_date'])}\n"
             f"⚡ Аукцион: {format_date(dates.get('auction_date', dates['bid_end_date']))}\n"
-            f"🔍 Рассмотрение: {format_date(dates.get('review_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
-            f"📋 Протокол: {format_date(dates.get('protocol_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
+            f"🔍 Рассмотрение: {format_date(dates.get('review_date', dates['bid_end_date']))}\n"
+            f"📋 Протокол: {format_date(dates.get('protocol_date', dates['bid_end_date']))}\n"
             f"✍️ Подписание: {format_date(dates['signing_date'])}\n"
         )
 

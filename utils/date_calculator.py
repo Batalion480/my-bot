@@ -52,6 +52,9 @@ def parse_date(date_str: str) -> Optional[date]:
 
 
 def format_nmck_result(result: Dict) -> str:
+    """
+    Форматирует результат расчёта НМЦК для вывода в Telegram
+    """
     nmck = result.get('nmck', 0)
     variation = result.get('variation_coefficient', 0) * 100
     warning = result.get('scatter_warning', '')
@@ -59,7 +62,7 @@ def format_nmck_result(result: Dict) -> str:
     text = (
         f"📊 **Результат расчёта НМЦК:**\n\n"
         f"💰 **НМЦК:** {nmck:,.2f} руб.\n"
-        f"📊 Коэффициент вариации: {variation:.1f}%\n"
+        f"📊 Коэффициент вариации: {variation:.2f}%\n"
     )
     
     if warning:
