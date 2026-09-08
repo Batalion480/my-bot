@@ -18,13 +18,6 @@ def add_working_days(start_date: date, days: int) -> date:
     """
     Прибавляет указанное количество рабочих дней к дате
     (с учётом выходных и праздничных дней)
-    
-    Args:
-        start_date: Дата старта
-        days: Количество рабочих дней для добавления
-    
-    Returns:
-        Новая дата
     """
     if days <= 0:
         return start_date
@@ -41,29 +34,17 @@ def add_working_days(start_date: date, days: int) -> date:
 
 
 def add_calendar_days(start_date: date, days: int) -> date:
-    """
-    Прибавляет указанное количество календарных дней к дате
-    (без учёта выходных)
-    
-    Args:
-        start_date: Дата старта
-        days: Количество календарных дней для добавления
-    
-    Returns:
-        Новая дата
-    """
+    """Прибавляет календарные дни"""
     return start_date + timedelta(days=days)
 
 
 def format_date(d: date) -> str:
-    """Форматирует дату в формате ДД.ММ.ГГГГ"""
     if d is None:
         return "—"
     return d.strftime("%d.%m.%Y")
 
 
 def parse_date(date_str: str) -> Optional[date]:
-    """Парсит дату из строки в формате ДД.ММ.ГГГГ"""
     try:
         return datetime.strptime(date_str.strip(), "%d.%m.%Y").date()
     except (ValueError, TypeError):
@@ -71,15 +52,6 @@ def parse_date(date_str: str) -> Optional[date]:
 
 
 def format_nmck_result(result: Dict) -> str:
-    """
-    Форматирует результат расчёта НМЦК для вывода в Telegram
-    
-    Args:
-        result: Словарь с результатами от NMCKCalculator.calculate_nmck
-    
-    Returns:
-        Отформатированный текст
-    """
     nmck = result.get('nmck', 0)
     variation = result.get('variation_coefficient', 0) * 100
     warning = result.get('scatter_warning', '')
@@ -106,26 +78,10 @@ def format_nmck_result(result: Dict) -> str:
 # ============================================================
 
 class NMCKCalculator:
-    """Класс для расчёта начальной (максимальной) цены контракта"""
+    """Класс для расчёта НМЦК"""
     
     @staticmethod
     def calculate_nmck(prices: List[float], method: str = "average") -> Dict:
-        """
-        Рассчитывает НМЦК методом сопоставимых рыночных цен
-
-        Args:
-            prices: список цен (минимум 3)
-            method: "average" - средняя цена, "minimum" - минимальная цена
-
-        Returns:
-            Словарь с результатами:
-            - nmck: итоговая цена
-            - variation_coefficient: коэффициент вариации
-            - scatter_warning: предупреждение о разбросе цен
-            - prices: использованные цены
-            - avg_price: средняя цена
-        """
-        # Проверка на минимальное количество цен
         if len(prices) < 3:
             return {
                 "nmck": 0,
@@ -135,7 +91,6 @@ class NMCKCalculator:
                 "avg_price": 0
             }
 
-        # Удаляем нулевые значения
         valid_prices = [p for p in prices if p > 0]
         if len(valid_prices) < 3:
             return {
@@ -155,16 +110,14 @@ class NMCKCalculator:
         std_dev = variance ** 0.5
         variation_coef = std_dev / avg_price if avg_price > 0 else 0
 
-        # Итоговая цена
         if method == "minimum":
             nmck = min(valid_prices)
         else:
             nmck = avg_price
 
-        # Предупреждение о разбросе
         scatter_warning = ""
         if variation_coef > 0.33:
-            scatter_warning = "⚠️ Коэффициент вариации > 33%! Цены неоднородны. Рекомендуется проверить коммерческие предложения."
+            scatter_warning = "⚠️ Коэффициент вариации > 33%! Цены неоднородны."
 
         return {
             "nmck": nmck,
@@ -178,21 +131,6 @@ class NMCKCalculator:
 
     @staticmethod
     def calculate_multiposition_nmck(positions: List[Dict], method: str = "average") -> Dict:
-        """
-        Рассчитывает НМЦК для нескольких позиций
-
-        Args:
-            positions: список позиций с полями:
-                - name: наименование
-                - okpd: ОКПД2/КТРУ
-                - unit: единица измерения
-                - quantity: количество
-                - prices: список из 3 цен
-            method: "average" или "minimum"
-
-        Returns:
-            Словарь с результатами по каждой позиции и итогом
-        """
         result_positions = []
         total_nmck = 0
         total_scatter_warnings = []
@@ -200,12 +138,9 @@ class NMCKCalculator:
         for idx, pos in enumerate(positions):
             prices = pos.get('prices', [])
             if not prices or len(prices) < 3:
-                # Пропускаем позицию, если нет цен
                 continue
 
-            # Расчёт для позиции
             calc_result = NMCKCalculator.calculate_nmck(prices, method)
-
             qty = pos.get('quantity', 1)
             pos_nmck = calc_result['nmck'] * qty
             total_nmck += pos_nmck
@@ -228,7 +163,6 @@ class NMCKCalculator:
                 "scatter_warning": calc_result.get('scatter_warning', '')
             })
 
-        # Формируем общее предупреждение
         scatter_warning_text = ""
         if total_scatter_warnings:
             scatter_warning_text = "⚠️ Есть позиции с неоднородными ценами:\n"
@@ -256,20 +190,9 @@ async def calculate_dates_from_db(
     custom_params: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """
-    Рассчитывает даты на основе правил из базы знаний (knowledge_base).
-
-    Args:
-        law_type: "44-FZ" или "223-FZ"
-        procedure_type: "auction", "quote", "competition"
-        publication_date: дата публикации
-        nmck: НМЦК (для 44-ФЗ)
-        db: экземпляр Database
-        custom_params: для 223-ФЗ: {'bid_days': int, 'review_days': int, 'signing_days': int}
-
-    Returns:
-        Словарь с датами и применёнными правилами
+    Рассчитывает даты на основе правил из базы знаний.
+    Для запроса котировок используется special-логика с дополнительными этапами.
     """
-    # Получаем правила для процедуры
     rules = await db.get_all_rules_for_procedure(law_type, procedure_type)
     rules_dict = {rule['stage']: rule for rule in rules}
 
@@ -280,19 +203,16 @@ async def calculate_dates_from_db(
     }
     applied_rules = {}
 
+    # Начальная дата для расчёта (со следующего дня после публикации)
+    start_date = publication_date + timedelta(days=1)
+
     # ---- 1. Подача заявок ----
     bid_rule = rules_dict.get('bid_submission')
     if bid_rule:
         calc_type = bid_rule['calculation_type']
-        # Начальная дата для расчёта (со следующего дня после публикации)
-        start_date = publication_date + timedelta(days=1)
         
         if calc_type == 'nmck_based':
-            # Для 44-ФЗ: 7 или 15 дней в зависимости от НМЦК
-            if nmck is not None and nmck <= 300_000_000:
-                bid_days = 7
-            else:
-                bid_days = 15
+            bid_days = 7 if nmck and nmck <= 300_000_000 else 15
         elif calc_type == 'fixed_7_days':
             bid_days = 7
         elif calc_type == 'fixed_15_days':
@@ -304,19 +224,16 @@ async def calculate_dates_from_db(
         else:
             bid_days = 7
         
-        # Все сроки считаются со следующего дня после публикации
         dates['bid_end_date'] = add_working_days(start_date, bid_days)
         dates['applied_bid_days'] = bid_days
         dates['bid_rule'] = bid_rule
         applied_rules['bid_submission'] = bid_rule
     else:
-        # fallback
-        start_date = publication_date + timedelta(days=1)
         bid_days = 7 if nmck and nmck <= 300_000_000 else 15
         dates['bid_end_date'] = add_working_days(start_date, bid_days)
         dates['applied_bid_days'] = bid_days
 
-    # ---- 2. Аукцион (если есть) ----
+    # ---- 2. Аукцион (для аукциона) ----
     auction_rule = rules_dict.get('auction')
     if auction_rule and auction_rule.get('calculation_type') in ('fixed_0_days', 'user_defined'):
         dates['auction_date'] = dates['bid_end_date']
@@ -335,12 +252,12 @@ async def calculate_dates_from_db(
         else:
             review_days = 2
         
-        dates['review_date'] = add_working_days(dates['auction_date'], review_days)
+        dates['review_date'] = add_working_days(dates['bid_end_date'], review_days)
         dates['applied_review_days'] = review_days
         dates['review_rule'] = review_rule
         applied_rules['review'] = review_rule
     else:
-        dates['review_date'] = add_working_days(dates['auction_date'], 2)
+        dates['review_date'] = add_working_days(dates['bid_end_date'], 2)
         dates['applied_review_days'] = 2
 
     # ---- 4. Протокол ----
@@ -370,6 +287,15 @@ async def calculate_dates_from_db(
         dates['signing_date'] = add_calendar_days(dates['protocol_date'], 10)
         dates['applied_signing_days'] = 10
 
+    # ---- 6. СПЕЦИАЛЬНЫЕ ПОЛЯ ДЛЯ ЗАПРОСА КОТИРОВОК ----
+    if procedure_type == "quote":
+        # Размещение проекта контракта (не позднее 1 рабочего дня после протокола)
+        dates['contract_project_date'] = add_working_days(dates['protocol_date'], 1)
+        # Подписание контракта победителем (не позднее 1 рабочего дня после проекта)
+        dates['winner_signing_date'] = add_working_days(dates['contract_project_date'], 1)
+        # Подписание контракта заказчиком (не ранее 2 рабочих дней после протокола)
+        dates['customer_signing_date'] = add_working_days(dates['protocol_date'], 2)
+
     # ---- Собираем источники ----
     sources = []
     for rule in rules:
@@ -386,10 +312,6 @@ async def calculate_dates_from_db(
 # ============================================================
 
 def get_working_days_between(start_date: date, end_date: date) -> int:
-    """
-    Возвращает количество рабочих дней между двумя датами
-    (не включая start_date, включая end_date)
-    """
     if start_date >= end_date:
         return 0
     
@@ -403,17 +325,12 @@ def get_working_days_between(start_date: date, end_date: date) -> int:
 
 
 def get_calendar_days_between(start_date: date, end_date: date) -> int:
-    """Возвращает количество календарных дней между двумя датами"""
     if start_date >= end_date:
         return 0
     return (end_date - start_date).days
 
 
 def shift_date_by_working_days(date_obj: date, days: int) -> date:
-    """
-    Сдвигает дату на указанное количество рабочих дней
-    (положительное значение - вперёд, отрицательное - назад)
-    """
     if days == 0:
         return date_obj
     
@@ -430,5 +347,4 @@ def shift_date_by_working_days(date_obj: date, days: int) -> date:
 
 
 def shift_date_by_calendar_days(date_obj: date, days: int) -> date:
-    """Сдвигает дату на указанное количество календарных дней"""
     return date_obj + timedelta(days=days)
