@@ -3,7 +3,7 @@
 # Модуль для расчёта НМЦК и дат по 44-ФЗ и 223-ФЗ
 # ============================================================
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from typing import List, Dict, Any, Optional
 import re
 
@@ -146,9 +146,12 @@ class NMCKCalculator:
                 "avg_price": 0
             }
 
-        # Расчёт средней и дисперсии
+        # Расчёт средней и дисперсии (с делением на n-1, как в Excel)
         avg_price = sum(valid_prices) / len(valid_prices)
-        variance = sum((p - avg_price) ** 2 for p in valid_prices) / len(valid_prices)
+        if len(valid_prices) > 1:
+            variance = sum((p - avg_price) ** 2 for p in valid_prices) / (len(valid_prices) - 1)
+        else:
+            variance = 0
         std_dev = variance ** 0.5
         variation_coef = std_dev / avg_price if avg_price > 0 else 0
 
@@ -281,6 +284,9 @@ async def calculate_dates_from_db(
     bid_rule = rules_dict.get('bid_submission')
     if bid_rule:
         calc_type = bid_rule['calculation_type']
+        # Начальная дата для расчёта (со следующего дня после публикации)
+        start_date = publication_date + timedelta(days=1)
+        
         if calc_type == 'nmck_based':
             # Для 44-ФЗ: 7 или 15 дней в зависимости от НМЦК
             if nmck is not None and nmck <= 300_000_000:
@@ -298,14 +304,16 @@ async def calculate_dates_from_db(
         else:
             bid_days = 7
         
-        dates['bid_end_date'] = add_working_days(publication_date, bid_days)
+        # Все сроки считаются со следующего дня после публикации
+        dates['bid_end_date'] = add_working_days(start_date, bid_days)
         dates['applied_bid_days'] = bid_days
         dates['bid_rule'] = bid_rule
         applied_rules['bid_submission'] = bid_rule
     else:
         # fallback
+        start_date = publication_date + timedelta(days=1)
         bid_days = 7 if nmck and nmck <= 300_000_000 else 15
-        dates['bid_end_date'] = add_working_days(publication_date, bid_days)
+        dates['bid_end_date'] = add_working_days(start_date, bid_days)
         dates['applied_bid_days'] = bid_days
 
     # ---- 2. Аукцион (если есть) ----

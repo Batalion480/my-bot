@@ -43,6 +43,7 @@ class TermsStates(StatesGroup):
 # ============================================================
 
 def get_stage_name(stage: str) -> str:
+    """Возвращает человекочитаемое название этапа"""
     stage_names = {
         "bid_submission": "📩 Подача заявок",
         "auction": "⚡ Аукцион",
@@ -59,7 +60,6 @@ def get_stage_name(stage: str) -> str:
 
 @router.callback_query(lambda c: c.data == "go_to_terms")
 async def start_terms(callback: types.CallbackQuery, state: FSMContext):
-    """Начало расчёта сроков - выбор процедуры (без удаления сообщения)"""
     await callback.answer()
     await state.set_state(TermsStates.waiting_for_procedure)
 
@@ -70,8 +70,7 @@ async def start_terms(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="🔙 Главное меню", callback_data="back_to_menu")
     builder.adjust(1)
 
-    # Отправляем новое сообщение, не удаляя предыдущее
-    await callback.message.answer(
+    await callback.message.edit_text(
         "📅 **Выберите процедуру для расчета сроков:**",
         reply_markup=builder.as_markup()
     )
@@ -94,11 +93,9 @@ async def select_procedure(callback: types.CallbackQuery, state: FSMContext):
     procedure_name = procedure_names.get(procedure, procedure)
 
     if law_type == "44":
-        # Проверяем, есть ли сохранённая НМЦК из расчёта
         nmck = data.get("nmck_for_terms") or data.get("nmck")
         if nmck:
             await state.update_data(nmck=nmck)
-            # Если НМЦК есть, сразу переходим к дате публикации
             await state.set_state(TermsStates.waiting_for_publication_date)
             await callback.message.edit_text(
                 f"📌 Выбрана процедура: **{procedure_name}**\n\n"
@@ -115,7 +112,6 @@ async def select_procedure(callback: types.CallbackQuery, state: FSMContext):
                 "Например: *2500000*"
             )
     else:
-        # Для 223-ФЗ запрашиваем сроки из Положения
         await state.set_state(TermsStates.waiting_for_bid_days)
         await callback.message.edit_text(
             f"📌 Выбрана процедура: **{procedure_name}**\n\n"
@@ -124,10 +120,6 @@ async def select_procedure(callback: types.CallbackQuery, state: FSMContext):
             "Например: *7*"
         )
 
-
-# ============================================================
-# 44-ФЗ: ВВОД НМЦК (если не сохранена)
-# ============================================================
 
 @router.message(TermsStates.waiting_for_nmck)
 async def process_nmck_for_terms(message: types.Message, state: FSMContext):
@@ -146,10 +138,6 @@ async def process_nmck_for_terms(message: types.Message, state: FSMContext):
         "Например: *15.10.2026*"
     )
 
-
-# ============================================================
-# 223-ФЗ: ВВОД СРОКОВ ИЗ ПОЛОЖЕНИЯ
-# ============================================================
 
 @router.message(TermsStates.waiting_for_bid_days)
 async def process_bid_days(message: types.Message, state: FSMContext):
@@ -186,10 +174,6 @@ async def process_review_days(message: types.Message, state: FSMContext):
         "Например: *15.10.2026*"
     )
 
-
-# ============================================================
-# ОБЩАЯ ДАТА ПУБЛИКАЦИИ
-# ============================================================
 
 @router.message(TermsStates.waiting_for_publication_date)
 async def process_publication_date(message: types.Message, state: FSMContext):
@@ -248,16 +232,35 @@ async def process_publication_date(message: types.Message, state: FSMContext):
     await state.update_data(dates=dates)
 
     law_label = f"{law_type}-ФЗ"
+    
+    # ============================================================
+    # ФОРМИРОВАНИЕ ТЕКСТА В ЗАВИСИМОСТИ ОТ ПРОЦЕДУРЫ
+    # ============================================================
+    if procedure == "quote":
+        # Для запроса котировок
+        date_lines = (
+            f"📄 Публикация: {format_date(dates['publication_date'])}\n"
+            f"📩 Окончание подачи заявок: {format_date(dates['bid_end_date'])}\n"
+            f"🔍 Рассмотрение заявок: {format_date(dates.get('review_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
+            f"📋 Публикация итогового протокола: {format_date(dates.get('protocol_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
+            f"✍️ Подписание контракта: {format_date(dates['signing_date'])}\n"
+        )
+    else:
+        # Для аукциона и конкурса
+        date_lines = (
+            f"📄 Публикация: {format_date(dates['publication_date'])}\n"
+            f"📩 Окончание подачи: {format_date(dates['bid_end_date'])}\n"
+            f"⚡ Аукцион: {format_date(dates.get('auction_date', dates['bid_end_date']))}\n"
+            f"🔍 Рассмотрение: {format_date(dates.get('review_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
+            f"📋 Протокол: {format_date(dates.get('protocol_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
+            f"✍️ Подписание: {format_date(dates['signing_date'])}\n"
+        )
+
     text = (
         f"📅 **Расчет сроков по {law_label}**\n\n"
         f"📖 **Применены правила:**\n{rules_text}\n"
         f"📊 **Рассчитанные даты:**\n"
-        f"📄 Публикация: {format_date(dates['publication_date'])}\n"
-        f"📩 Окончание подачи: {format_date(dates['bid_end_date'])}\n"
-        f"⚡ Аукцион: {format_date(dates.get('auction_date', dates['bid_end_date']))}\n"
-        f"🔍 Рассмотрение: {format_date(dates.get('review_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
-        f"📋 Протокол: {format_date(dates.get('protocol_date', dates.get('consideration_date', dates['bid_end_date'])))}\n"
-        f"✍️ Подписание: {format_date(dates['signing_date'])}\n"
+        f"{date_lines}"
     )
     if nmck:
         text += f"\n💰 НМЦК: {nmck:,.2f} руб."
@@ -274,7 +277,7 @@ async def process_publication_date(message: types.Message, state: FSMContext):
 
 
 # ============================================================
-# СДВИГ ДАТ (без изменений)
+# СДВИГ ДАТ
 # ============================================================
 
 @router.callback_query(lambda c: c.data in ["shift_back", "shift_forward"])
@@ -358,7 +361,7 @@ async def process_shift(message: types.Message, state: FSMContext):
         f"(сдвиг {shift_text} дней)\n\n"
         f"📊 **Было → Стало:**\n"
         f"📄 Публикация: {format_date(old_publication)} → {format_date(new_publication)}\n"
-        f"📩 Подача: {format_date(old_dates['bid_end_date'])} → {format_date(new_dates['bid_end_date'])}\n"
+        f"📩 Окончание подачи: {format_date(old_dates['bid_end_date'])} → {format_date(new_dates['bid_end_date'])}\n"
         f"✍️ Подписание: {format_date(old_dates['signing_date'])} → {format_date(new_dates['signing_date'])}\n\n"
     )
 
@@ -426,7 +429,7 @@ async def reset_dates(callback: types.CallbackQuery, state: FSMContext):
     text = (
         f"✅ **Даты возвращены к исходным:**\n\n"
         f"📄 Публикация: {format_date(new_dates['publication_date'])}\n"
-        f"📩 Подача: {format_date(new_dates['bid_end_date'])}\n"
+        f"📩 Окончание подачи: {format_date(new_dates['bid_end_date'])}\n"
         f"✍️ Подписание: {format_date(new_dates['signing_date'])}"
     )
 
